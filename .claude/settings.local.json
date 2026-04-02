@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(export PATH=\"/c/Users/juwsh/.cargo/bin:$PATH\")",
+      "Bash(export BUILD_TYPE=canary)",
+      "Bash(node .yarn/releases/yarn-4.13.0.cjs affine @affine/electron generate-assets)"
+    ]
+  }
+}
