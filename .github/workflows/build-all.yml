@@ -1,0 +1,668 @@
+name: Build All Platforms
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      build_macos:
+        description: 'Build macOS Desktop'
+        type: boolean
+        default: true
+      build_windows:
+        description: 'Build Windows Desktop'
+        type: boolean
+        default: true
+      build_server:
+        description: 'Build Server (Docker)'
+        type: boolean
+        default: true
+      build_linux:
+        description: 'Build Linux Desktop'
+        type: boolean
+        default: false
+      create_release:
+        description: 'Create GitHub Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  DEBUG: 'affine:*,napi:*'
+  APP_NAME: affine
+  MACOSX_DEPLOYMENT_TARGET: '12.0'
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1. Prepare: detect version + build type
+  # ─────────────────────────────────────────────
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      APP_VERSION: ${{ steps.version.outputs.APP_VERSION }}
+      GIT_SHORT_HASH: ${{ steps.version.outputs.GIT_SHORT_HASH }}
+      BUILD_TYPE: ${{ steps.version.outputs.BUILD_TYPE }}
+      build_macos: ${{ steps.flags.outputs.build_macos }}
+      build_windows: ${{ steps.flags.outputs.build_windows }}
+      build_server: ${{ steps.flags.outputs.build_server }}
+      build_linux: ${{ steps.flags.outputs.build_linux }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          GIT_SHORT_HASH=$(git rev-parse --short HEAD)
+          if [ "${{ github.ref_type }}" == "tag" ]; then
+            APP_VERSION=$(echo "${{ github.ref_name }}" | sed 's/^v//')
+          else
+            APP_VERSION=$(cat package.json | jq -r .version)-canary.${GIT_SHORT_HASH}
+          fi
+          if [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            BUILD_TYPE=stable
+          elif [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            BUILD_TYPE=beta
+          else
+            BUILD_TYPE=canary
+          fi
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "GIT_SHORT_HASH=$GIT_SHORT_HASH" >> "$GITHUB_OUTPUT"
+          echo "BUILD_TYPE=$BUILD_TYPE" >> "$GITHUB_OUTPUT"
+          echo "Version: $APP_VERSION ($BUILD_TYPE) @ $GIT_SHORT_HASH"
+
+      - name: Set build flags
+        id: flags
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "build_macos=${{ inputs.build_macos }}" >> "$GITHUB_OUTPUT"
+            echo "build_windows=${{ inputs.build_windows }}" >> "$GITHUB_OUTPUT"
+            echo "build_server=${{ inputs.build_server }}" >> "$GITHUB_OUTPUT"
+            echo "build_linux=${{ inputs.build_linux }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_macos=true" >> "$GITHUB_OUTPUT"
+            echo "build_windows=true" >> "$GITHUB_OUTPUT"
+            echo "build_server=true" >> "$GITHUB_OUTPUT"
+            echo "build_linux=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ─────────────────────────────────────────────
+  # 2. Build web assets (shared by desktop + server)
+  # ─────────────────────────────────────────────
+  build-web:
+    name: Build Web Assets
+    runs-on: ubuntu-latest
+    needs: prepare
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
+      - name: Build @affine/web
+        run: yarn affine @affine/web build
+        env:
+          BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: 'affine-web'
+          SENTRY_RELEASE: ${{ needs.prepare.outputs.APP_VERSION }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: ./packages/frontend/apps/web/dist
+          if-no-files-found: error
+
+  build-admin:
+    name: Build Admin
+    runs-on: ubuntu-latest
+    needs: prepare
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
+      - name: Build @affine/admin
+        run: yarn affine @affine/admin build
+        env:
+          BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      - name: Upload admin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin
+          path: ./packages/frontend/admin/dist
+          if-no-files-found: error
+
+  build-mobile-web:
+    name: Build Mobile Web
+    runs-on: ubuntu-latest
+    needs: prepare
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
+      - name: Build @affine/mobile
+        run: yarn affine @affine/mobile build
+        env:
+          BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      - name: Upload mobile artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile
+          path: ./packages/frontend/apps/mobile/dist
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────
+  # 3. Build desktop web static (for Electron)
+  # ─────────────────────────────────────────────
+  build-desktop-web:
+    name: Build Desktop Web Static
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: ${{ needs.prepare.outputs.build_macos == 'true' || needs.prepare.outputs.build_windows == 'true' || needs.prepare.outputs.build_linux == 'true' }}
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
+      - name: Generate desktop assets
+        run: yarn affine @affine/electron generate-assets
+        env:
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: 'affine'
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_RELEASE: ${{ needs.prepare.outputs.APP_VERSION }}
+      - name: Upload desktop web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-web
+          path: packages/frontend/apps/electron/resources/web-static
+
+  # ─────────────────────────────────────────────
+  # 4a. macOS Desktop (x64 + arm64)
+  # ─────────────────────────────────────────────
+  build-macos:
+    name: macOS Desktop (${{ matrix.arch }})
+    if: ${{ needs.prepare.outputs.build_macos == 'true' }}
+    needs: [prepare, build-desktop-web]
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-apple-darwin
+          - arch: arm64
+            target: aarch64-apple-darwin
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
+      SKIP_GENERATE_ASSETS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+
+      - name: Setup Node.js
+        timeout-minutes: 10
+        uses: ./.github/actions/setup-node
+        with:
+          extra-flags: workspaces focus @affine/electron @affine/monorepo @affine/nbstore @toeverything/infra
+          hard-link-nm: false
+          nmHoistingLimits: workspaces
+
+      - name: Build AFFiNE native
+        uses: ./.github/actions/build-rust
+        with:
+          target: ${{ matrix.target }}
+          package: '@affine/native'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-web
+          path: packages/frontend/apps/electron/resources/web-static
+
+      - name: Build Desktop Layers
+        run: yarn affine @affine/electron build
+
+      # Optional: Apple code signing (only if secrets are configured)
+      - name: Import Apple signing certificate
+        if: ${{ env.CERTIFICATES_P12 != '' }}
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
+          p12-password: ${{ secrets.CERTIFICATES_P12_PASSWORD }}
+        env:
+          CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
+
+      - name: Remove bloat from node_modules
+        run: |
+          cargo clean
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/nbstore/node_modules/@blocksuite
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/native/node_modules
+
+      - name: Make distribution
+        run: yarn affine @affine/electron make --platform=darwin --arch=${{ matrix.arch }}
+        env:
+          SKIP_WEB_BUILD: 1
+          HOIST_NODE_MODULES: 1
+          NODE_OPTIONS: --max-old-space-size=14384
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p builds
+          mv packages/frontend/apps/electron/out/*/make/*.dmg ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-macos-${{ matrix.arch }}.dmg || true
+          mv packages/frontend/apps/electron/out/*/make/zip/darwin/${{ matrix.arch }}/*.zip ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-macos-${{ matrix.arch }}.zip || true
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: affine-darwin-${{ matrix.arch }}-builds
+          path: builds
+
+  # ─────────────────────────────────────────────
+  # 4b. Windows Desktop (x64 + arm64)
+  # ─────────────────────────────────────────────
+  build-windows:
+    name: Windows Desktop (${{ matrix.arch }})
+    if: ${{ needs.prepare.outputs.build_windows == 'true' }}
+    needs: [prepare, build-desktop-web]
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
+      SKIP_GENERATE_ASSETS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+
+      - name: Setup Node.js
+        timeout-minutes: 10
+        uses: ./.github/actions/setup-node
+        with:
+          extra-flags: workspaces focus @affine/electron @affine/monorepo @affine/nbstore @toeverything/infra
+          hard-link-nm: false
+          nmHoistingLimits: workspaces
+          enableScripts: true
+
+      - name: Build AFFiNE native
+        uses: ./.github/actions/build-rust
+        with:
+          target: ${{ matrix.target }}
+          package: '@affine/native'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-web
+          path: packages/frontend/apps/electron/resources/web-static
+
+      - name: Build Desktop Layers
+        run: yarn affine @affine/electron build
+
+      - name: Remove bloat from node_modules
+        shell: bash
+        run: |
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/nbstore/node_modules/@blocksuite/affine/node_modules
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/native/node_modules
+
+      - name: Package application
+        run: yarn affine @affine/electron package --platform=win32 --arch=${{ matrix.arch }}
+        env:
+          SKIP_WEB_BUILD: 1
+          HOIST_NODE_MODULES: 1
+          NODE_OPTIONS: --max-old-space-size=14384
+
+      - name: Make Squirrel installer
+        run: yarn affine @affine/electron make-squirrel --platform=win32 --arch=${{ matrix.arch }}
+
+      - name: Make NSIS installer
+        run: yarn affine @affine/electron make-nsis --platform=win32 --arch=${{ matrix.arch }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p builds
+          cp packages/frontend/apps/electron/out/*/make/zip/win32/${{ matrix.arch }}/AFFiNE*-win32-${{ matrix.arch }}-*.zip ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.arch }}.zip || true
+          cp packages/frontend/apps/electron/out/*/make/squirrel.windows/${{ matrix.arch }}/*.exe ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.arch }}.exe || true
+          cp packages/frontend/apps/electron/out/*/make/nsis.windows/${{ matrix.arch }}/*.exe ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.arch }}.nsis.exe || true
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: affine-win32-${{ matrix.arch }}-builds
+          path: builds
+
+  # ─────────────────────────────────────────────
+  # 4c. Linux Desktop (x64)
+  # ─────────────────────────────────────────────
+  build-linux:
+    name: Linux Desktop (x64)
+    if: ${{ needs.prepare.outputs.build_linux == 'true' }}
+    needs: [prepare, build-desktop-web]
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
+      SKIP_GENERATE_ASSETS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+
+      - name: Setup Node.js
+        timeout-minutes: 10
+        uses: ./.github/actions/setup-node
+        with:
+          extra-flags: workspaces focus @affine/electron @affine/monorepo @affine/nbstore @toeverything/infra
+          hard-link-nm: false
+          nmHoistingLimits: workspaces
+
+      - name: Build AFFiNE native
+        uses: ./.github/actions/build-rust
+        with:
+          target: x86_64-unknown-linux-gnu
+          package: '@affine/native'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-web
+          path: packages/frontend/apps/electron/resources/web-static
+
+      - name: Build Desktop Layers
+        run: yarn affine @affine/electron build
+
+      - name: Install Linux dependencies
+        run: |
+          sudo add-apt-repository universe
+          sudo apt install -y libfuse2 elfutils
+          # Free disk space
+          sudo -E apt-get -y purge azure-cli* zulu* hhvm* llvm* firefox* google* dotnet* aspnetcore* powershell* adoptopenjdk* mysql* php* mongodb* moby* snap* || true
+          sudo -E apt-get -qq autoremove --purge
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/lib/android
+          sudo apt-get clean
+
+      - name: Remove bloat from node_modules
+        run: |
+          cargo clean
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/nbstore/node_modules/@blocksuite
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/native/node_modules
+
+      - name: Make distribution
+        run: yarn affine @affine/electron make --platform=linux --arch=x64
+        env:
+          SKIP_WEB_BUILD: 1
+          HOIST_NODE_MODULES: 1
+          NODE_OPTIONS: --max-old-space-size=14384
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p builds
+          mv packages/frontend/apps/electron/out/*/make/zip/linux/x64/*.zip ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-linux-x64.zip || true
+          mv packages/frontend/apps/electron/out/*/make/AppImage/x64/*.AppImage ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-linux-x64.appimage || true
+          mv packages/frontend/apps/electron/out/*/make/deb/x64/*.deb ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-linux-x64.deb || true
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: affine-linux-x64-builds
+          path: builds
+
+  # ─────────────────────────────────────────────
+  # 5. Server: build native + bundle + Docker image
+  # ─────────────────────────────────────────────
+  build-server-native:
+    name: Build Server Native (${{ matrix.target }})
+    if: ${{ needs.prepare.outputs.build_server == 'true' }}
+    needs: prepare
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            file: server-native.x64.node
+          - target: aarch64-unknown-linux-gnu
+            file: server-native.arm64.node
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
+        with:
+          electron-install: false
+          extra-flags: workspaces focus @affine/server-native
+      - name: Build Rust
+        uses: ./.github/actions/build-rust
+        with:
+          target: ${{ matrix.target }}
+          package: '@affine/server-native'
+      - name: Rename native file
+        run: mv ./packages/backend/native/server-native.node ./packages/backend/native/${{ matrix.file }}
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-native-${{ matrix.file }}
+          path: ./packages/backend/native/${{ matrix.file }}
+          if-no-files-found: error
+
+  build-server:
+    name: Build Server Bundle
+    if: ${{ needs.prepare.outputs.build_server == 'true' }}
+    needs: [prepare, build-server-native]
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
+        with:
+          electron-install: false
+          extra-flags: workspaces focus @affine/server @types/affine__env
+      - name: Download server-native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: server-native-*
+          merge-multiple: true
+          path: ./packages/backend/native
+      - name: Build Server
+        run: yarn workspace @affine/server build
+      - name: Upload server dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-dist
+          path: ./packages/backend/server/dist
+          if-no-files-found: error
+
+  build-docker:
+    name: Build Docker Image
+    if: ${{ needs.prepare.outputs.build_server == 'true' }}
+    needs: [prepare, build-server, build-web, build-admin, build-mobile-web]
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download server dist
+        uses: actions/download-artifact@v4
+        with:
+          name: server-dist
+          path: ./packages/backend/server/dist
+
+      - name: Download web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: ./packages/frontend/apps/web/dist
+
+      - name: Download admin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: admin
+          path: ./packages/frontend/admin/dist
+
+      - name: Download mobile artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile
+          path: ./packages/frontend/apps/mobile/dist
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          logout: false
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          registry-url: https://npm.pkg.github.com
+          scope: '@toeverything'
+
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+
+      - name: Install Node.js dependencies for server
+        run: |
+          yarn config set --json supportedArchitectures.cpu '["x64", "arm64"]'
+          yarn config set --json supportedArchitectures.libc '["glibc"]'
+          yarn workspaces focus @affine/server --production
+
+      - name: Generate Prisma client
+        run: yarn workspace @affine/server prisma generate
+
+      - name: Move node_modules into server package
+        run: mv ./node_modules ./packages/backend/server
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          pull: true
+          platforms: linux/amd64,linux/arm64
+          provenance: true
+          file: .github/deployment/node/Dockerfile
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/affine:${{ needs.prepare.outputs.BUILD_TYPE }}-${{ needs.prepare.outputs.GIT_SHORT_HASH }}
+            ghcr.io/${{ github.repository_owner }}/affine:${{ needs.prepare.outputs.BUILD_TYPE }}-latest
+
+  # ─────────────────────────────────────────────
+  # 6. Create GitHub Release (collects all artifacts)
+  # ─────────────────────────────────────────────
+  release:
+    name: Create Release
+    if: |
+      always() &&
+      (github.event_name != 'workflow_dispatch' || inputs.create_release) &&
+      needs.prepare.result == 'success'
+    needs:
+      - prepare
+      - build-macos
+      - build-windows
+      - build-linux
+      - build-docker
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: affine-*-builds
+          merge-multiple: true
+          path: ./release
+
+      - name: List release files
+        run: ls -lah ./release/ || echo "No release files found"
+
+      - name: Copy selfhost files
+        run: |
+          cp ./.docker/selfhost/compose.yml ./release/docker-compose.yml 2>/dev/null || true
+          cp ./.docker/selfhost/.env.example ./release/.env.example 2>/dev/null || true
+          cp ./.docker/selfhost/schema.json ./release/config.schema.json 2>/dev/null || true
+
+      - name: Create GitHub Release
+        if: ${{ hashFiles('release/*') != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.RELEASE_VERSION }}
+          draft: ${{ needs.prepare.outputs.BUILD_TYPE == 'stable' }}
+          prerelease: ${{ needs.prepare.outputs.BUILD_TYPE != 'stable' }}
+          tag_name: v${{ env.RELEASE_VERSION }}
+          generate_release_notes: true
+          files: ./release/*
