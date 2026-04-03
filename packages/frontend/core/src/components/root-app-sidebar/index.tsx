@@ -1,29 +1,18 @@
-// Import is already correct, no changes needed
 import {
   AddPageButton,
-  AppDownloadButton,
   AppSidebar,
   MenuItem,
-  MenuLinkItem,
   QuickSearchInput,
   SidebarContainer,
   SidebarScrollableContainer,
 } from '@affine/core/modules/app-sidebar/views';
-import { ExternalMenuLinkItem } from '@affine/core/modules/app-sidebar/views/menu-item/external-menu-link-item';
-import { ServerService } from '@affine/core/modules/cloud';
 import { WorkspaceDialogService } from '@affine/core/modules/dialogs';
-import { FeatureFlagService } from '@affine/core/modules/feature-flag';
 import { CMDKQuickSearchService } from '@affine/core/modules/quicksearch/services/cmdk';
 import type { Workspace } from '@affine/core/modules/workspace';
 import { useI18n } from '@affine/i18n';
 import { track } from '@affine/track';
 import type { Store } from '@blocksuite/affine/store';
-import {
-  AiOutlineIcon,
-  ImportIcon,
-  JournalIcon,
-  SettingsIcon,
-} from '@blocksuite/icons/rc';
+import { ImportIcon, SettingsIcon } from '@blocksuite/icons/rc';
 import { useLiveData, useService, useServices } from '@toeverything/infra';
 import type { ReactElement } from 'react';
 import { memo, useCallback } from 'react';
@@ -34,6 +23,7 @@ import {
 } from '../../desktop/components/navigation-panel';
 import { WorkbenchService } from '../../modules/workbench';
 import { WorkspaceNavigator } from '../workspace-selector';
+import { CalendarButton, HabitsButton } from './classics';
 import {
   bottomContainer,
   quickSearch,
@@ -43,9 +33,7 @@ import {
 } from './index.css';
 import { InviteMembersButton } from './invite-members-button';
 import { SidebarAudioPlayer } from './sidebar-audio-player';
-import { TemplateDocEntrance } from './template-doc-entrance';
 import { TrashButton } from './trash-button';
-import { UpdaterButton } from './updater-button';
 import UserInfo from './user-info';
 
 export type RootAppSidebarProps = {
@@ -60,34 +48,6 @@ export type RootAppSidebarProps = {
     trash: (workspaceId: string) => string;
     shared: (workspaceId: string) => string;
   };
-};
-
-const AIChatButton = () => {
-  const t = useI18n();
-  const featureFlagService = useService(FeatureFlagService);
-  const serverService = useService(ServerService);
-  const serverFeatures = useLiveData(serverService.server.features$);
-  const enableAI = useLiveData(featureFlagService.flags.enable_ai.$);
-
-  const { workbenchService } = useServices({
-    WorkbenchService,
-  });
-  const workbench = workbenchService.workbench;
-  const aiChatActive = useLiveData(
-    workbench.location$.selector(location => location.pathname === '/chat')
-  );
-
-  if (!enableAI || !serverFeatures?.copilot) {
-    return null;
-  }
-
-  return (
-    <MenuLinkItem icon={<AiOutlineIcon />} active={aiChatActive} to={'/chat'}>
-      <span data-testid="ai-chat">
-        {t['com.affine.workspaceSubPath.chat']()}
-      </span>
-    </MenuLinkItem>
-  );
 };
 
 /**
@@ -181,7 +141,6 @@ export const RootAppSidebar = memo((): ReactElement => {
           />
           <AddPageButton />
         </div>
-        <AIChatButton />
         <MenuItem
           data-testid="slider-bar-workspace-setting-button"
           icon={<SettingsIcon />}
@@ -194,6 +153,14 @@ export const RootAppSidebar = memo((): ReactElement => {
       </SidebarContainer>
       <SidebarScrollableContainer>
         <NavigationPanelOrganize />
+        <CollapsibleSection
+          path={['classics']}
+          title="Classics"
+          contentStyle={{ padding: '6px 8px 0 8px' }}
+        >
+          <HabitsButton />
+          <CalendarButton />
+        </CollapsibleSection>
         <CollapsibleSection
           path={['others']}
           title={t['com.affine.rootAppSidebar.others']()}
@@ -208,17 +175,10 @@ export const RootAppSidebar = memo((): ReactElement => {
             <span data-testid="import-modal-trigger">{t['Import']()}</span>
           </MenuItem>
           <InviteMembersButton />
-          <TemplateDocEntrance />
-          <ExternalMenuLinkItem
-            href="https://affine.pro/blog?tag=Release+Note"
-            icon={<JournalIcon />}
-            label={t['com.affine.app-sidebar.learn-more']()}
-          />
         </CollapsibleSection>
       </SidebarScrollableContainer>
       <SidebarContainer className={bottomContainer}>
         <SidebarAudioPlayer />
-        {BUILD_CONFIG.isElectron ? <UpdaterButton /> : <AppDownloadButton />}
       </SidebarContainer>
     </AppSidebar>
   );
