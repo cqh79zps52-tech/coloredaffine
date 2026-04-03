@@ -3,7 +3,14 @@
     "allow": [
       "Bash(export PATH=\"/c/Users/juwsh/.cargo/bin:$PATH\")",
       "Bash(export BUILD_TYPE=canary)",
-      "Bash(node .yarn/releases/yarn-4.13.0.cjs affine @affine/electron generate-assets)"
+      "Bash(node .yarn/releases/yarn-4.13.0.cjs affine @affine/electron generate-assets)",
+      "Bash(node .yarn/releases/yarn-4.13.0.cjs config set nmMode classic)",
+      "Bash(node .yarn/releases/yarn-4.13.0.cjs config set nmHoistingLimits workspaces)",
+      "Bash(node .yarn/releases/yarn-4.13.0.cjs install)",
+      "Bash(export SKIP_WEB_BUILD=1)",
+      "Bash(export HOIST_NODE_MODULES=1)",
+      "Bash(node .yarn/releases/yarn-4.13.0.cjs affine @affine/electron package)",
+      "Bash(ls -d /d/Code/Projets/AFFiNE-canary/packages/*/)"
     ]
   }
 }
