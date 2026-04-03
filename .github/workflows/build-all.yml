@@ -473,6 +473,8 @@ jobs:
             file: server-native.x64.node
           - target: aarch64-unknown-linux-gnu
             file: server-native.arm64.node
+          - target: armv7-unknown-linux-gnueabihf
+            file: server-native.armv7.node
     env:
       BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
     steps:
@@ -595,7 +597,7 @@ jobs:
 
       - name: Install Node.js dependencies for server
         run: |
-          yarn config set --json supportedArchitectures.cpu '["x64", "arm64"]'
+          yarn config set --json supportedArchitectures.cpu '["x64", "arm64", "arm"]'
           yarn config set --json supportedArchitectures.libc '["glibc"]'
           yarn workspaces focus @affine/server --production
 
@@ -611,7 +613,7 @@ jobs:
           context: .
           push: true
           pull: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           provenance: true
           file: .github/deployment/node/Dockerfile
           tags: |
