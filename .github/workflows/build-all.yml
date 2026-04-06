@@ -61,10 +61,18 @@ jobs:
         shell: bash
         run: |
           GIT_SHORT_HASH=$(git rev-parse --short HEAD)
+          # Convert the hex SHA to its decimal equivalent. The Windows
+          # packager (Squirrel) calls parseInt on each dot-separated version
+          # component; if the canary suffix starts with a non-digit (e.g. "c"
+          # in "cce19bf") parseInt returns NaN and the Windows build dies
+          # with "Component ... could not be parsed as an integer". The
+          # decimal form is always a positive integer and is 1:1 reversible
+          # to the original SHA via `printf '%x' <decimal>`.
+          GIT_SHORT_HASH_DEC=$((16#$GIT_SHORT_HASH))
           if [ "${{ github.ref_type }}" == "tag" ]; then
             APP_VERSION=$(echo "${{ github.ref_name }}" | sed 's/^v//')
           else
-            APP_VERSION=$(cat package.json | jq -r .version)-canary.${GIT_SHORT_HASH}
+            APP_VERSION=$(cat package.json | jq -r .version)-canary.${GIT_SHORT_HASH_DEC}
           fi
           if [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             BUILD_TYPE=stable

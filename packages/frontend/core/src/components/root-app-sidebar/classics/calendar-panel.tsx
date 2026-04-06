@@ -1,6 +1,13 @@
 import { Modal } from '@affine/component';
 import clsx from 'clsx';
-import { useCallback, useMemo, useState } from 'react';
+import {
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import * as styles from './styles.css';
 import { useCalendarTodos } from './use-calendar-todos';
@@ -70,6 +77,128 @@ function getCalendarDays(year: number, month: number): CalendarGridDay[] {
   return days;
 }
 
+interface DayCellProps {
+  cellDate: string;
+  cellDayNumber: number;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+  todos: ReturnType<ReturnType<typeof useCalendarTodos>['getTodos']>;
+  onAdd: (date: string, text: string) => void;
+  onToggle: (date: string, todoId: string) => void;
+  onRemove: (date: string, todoId: string) => void;
+}
+
+const DayCell = ({
+  cellDate,
+  cellDayNumber,
+  isCurrentMonth,
+  isToday,
+  todos,
+  onAdd,
+  onToggle,
+  onRemove,
+}: DayCellProps) => {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (adding) inputRef.current?.focus();
+  }, [adding]);
+
+  const commit = useCallback(() => {
+    const trimmed = draft.trim();
+    if (trimmed) onAdd(cellDate, trimmed);
+    setDraft('');
+    setAdding(false);
+  }, [draft, cellDate, onAdd]);
+
+  const cancel = useCallback(() => {
+    setDraft('');
+    setAdding(false);
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') commit();
+      else if (e.key === 'Escape') cancel();
+    },
+    [commit, cancel]
+  );
+
+  return (
+    <div
+      className={clsx(
+        styles.calendarDayCell,
+        !isCurrentMonth && styles.calendarDayCellOtherMonth,
+        isToday && styles.calendarDayCellToday
+      )}
+    >
+      <div className={styles.calendarDayHeader}>
+        <span
+          className={clsx(
+            styles.calendarDayNumber,
+            isToday && styles.calendarDayNumberToday
+          )}
+        >
+          {cellDayNumber}
+        </span>
+      </div>
+
+      <div className={styles.calendarDayTodoList}>
+        {todos.map(todo => (
+          <div key={todo.id} className={styles.calendarDayTodoItem}>
+            <input
+              type="checkbox"
+              className={styles.calendarTodoCheckbox}
+              checked={todo.done}
+              onChange={() => onToggle(cellDate, todo.id)}
+            />
+            <span
+              className={clsx(
+                styles.calendarDayTodoText,
+                todo.done && styles.calendarDayTodoDone
+              )}
+              title={todo.text}
+            >
+              {todo.text}
+            </span>
+            <button
+              type="button"
+              className={styles.calendarDayTodoDelete}
+              onClick={() => onRemove(cellDate, todo.id)}
+              title="Remove task"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {adding ? (
+        <input
+          ref={inputRef}
+          className={styles.calendarDayAddInput}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={commit}
+          placeholder="New task…"
+        />
+      ) : (
+        <button
+          type="button"
+          className={styles.calendarDayAddButton}
+          onClick={() => setAdding(true)}
+          title="Add a task"
+        >
+          +
+        </button>
+      )}
+    </div>
+  );
+};
+
 export const CalendarPanel = ({
   open,
   onOpenChange,
@@ -81,20 +210,12 @@ export const CalendarPanel = ({
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
-  const [selectedDate, setSelectedDate] = useState<string>(today);
-  const [newTodoText, setNewTodoText] = useState('');
 
-  const { getTodos, addTodo, toggleTodo, removeTodo, getDayCount } =
-    useCalendarTodos();
+  const { getTodos, addTodo, toggleTodo, removeTodo } = useCalendarTodos();
 
   const calendarDays = useMemo(
     () => getCalendarDays(viewYear, viewMonth),
     [viewYear, viewMonth]
-  );
-
-  const selectedTodos = useMemo(
-    () => getTodos(selectedDate),
-    [getTodos, selectedDate]
   );
 
   const goToPrev = useCallback(() => {
@@ -105,7 +226,7 @@ export const CalendarPanel = ({
       }
       return m - 1;
     });
-  }, [setViewYear]);
+  }, [setViewYear, setViewMonth]);
 
   const goToNext = useCallback(() => {
     setViewMonth(m => {
@@ -115,130 +236,76 @@ export const CalendarPanel = ({
       }
       return m + 1;
     });
-  }, [setViewYear]);
+  }, [setViewYear, setViewMonth]);
 
-  const handleAddTodo = useCallback(() => {
-    const trimmed = newTodoText.trim();
-    if (!trimmed) return;
-    addTodo(selectedDate, trimmed);
-    setNewTodoText('');
-  }, [newTodoText, selectedDate, addTodo]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') handleAddTodo();
-    },
-    [handleAddTodo]
-  );
-
-  // Format selected date for display
-  const selectedDateObj = new Date(selectedDate + 'T00:00:00');
-  const formattedDate = selectedDateObj.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+  const goToToday = useCallback(() => {
+    const d = new Date();
+    setViewYear(d.getFullYear());
+    setViewMonth(d.getMonth());
+  }, [setViewYear, setViewMonth]);
 
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title="Calendar" width={480}>
-      <div className={styles.modalContent}>
-        {/* Month navigation */}
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Calendar"
+      width="min(95vw, 1400px)"
+      height="min(92vh, 900px)"
+    >
+      <div className={styles.calendarModalContent}>
         <div className={styles.calendarHeader}>
-          <button className={styles.calendarNavButton} onClick={goToPrev}>
-            ‹
-          </button>
           <span className={styles.calendarMonthLabel}>
             {MONTH_NAMES[viewMonth]} {viewYear}
           </span>
-          <button className={styles.calendarNavButton} onClick={goToNext}>
-            ›
-          </button>
+          <div className={styles.calendarNavGroup}>
+            <button
+              type="button"
+              className={styles.calendarNavButton}
+              onClick={goToPrev}
+              title="Previous month"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              className={styles.calendarTodayButton}
+              onClick={goToToday}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              className={styles.calendarNavButton}
+              onClick={goToNext}
+              title="Next month"
+            >
+              ›
+            </button>
+          </div>
         </div>
 
-        {/* Day names header */}
-        <div className={styles.calendarGrid}>
+        <div className={styles.calendarDayNamesRow}>
           {DAY_NAMES.map(dn => (
             <div key={dn} className={styles.calendarDayName}>
               {dn}
             </div>
           ))}
-
-          {/* Calendar days */}
-          {calendarDays.map((cd, i) => {
-            const hasTodos = getDayCount(cd.date) > 0;
-            return (
-              <div
-                key={i}
-                className={clsx(
-                  styles.calendarDay,
-                  cd.date === selectedDate && styles.calendarDaySelected,
-                  cd.date === today &&
-                    cd.date !== selectedDate &&
-                    styles.calendarDayToday,
-                  !cd.currentMonth && styles.calendarDayOtherMonth
-                )}
-                onClick={() => setSelectedDate(cd.date)}
-              >
-                {cd.day}
-                {hasTodos && <div className={styles.calendarDot} />}
-              </div>
-            );
-          })}
         </div>
 
-        {/* Selected day detail */}
-        <div className={styles.dayDetail}>
-          <div className={styles.dayDetailTitle}>{formattedDate}</div>
-
-          {selectedTodos.length === 0 && (
-            <div
-              style={{ fontSize: 13, color: 'var(--affine-text-secondary)' }}
-            >
-              No tasks for this day.
-            </div>
-          )}
-
-          {selectedTodos.map(todo => (
-            <div key={todo.id} className={styles.todoItem}>
-              <input
-                type="checkbox"
-                className={styles.todoCheckbox}
-                checked={todo.done}
-                onChange={() => toggleTodo(selectedDate, todo.id)}
-              />
-              <span
-                className={clsx(styles.todoText, todo.done && styles.todoDone)}
-              >
-                {todo.text}
-              </span>
-              <button
-                className={styles.deleteButton}
-                onClick={() => removeTodo(selectedDate, todo.id)}
-                title="Remove task"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-
-          {/* Add task */}
-          <div className={styles.addTodoRow}>
-            <input
-              className={styles.formInput}
-              placeholder="Add a task..."
-              value={newTodoText}
-              onChange={e => setNewTodoText(e.target.value)}
-              onKeyDown={handleKeyDown}
+        <div className={styles.calendarGrid}>
+          {calendarDays.map(cd => (
+            <DayCell
+              key={cd.date}
+              cellDate={cd.date}
+              cellDayNumber={cd.day}
+              isCurrentMonth={cd.currentMonth}
+              isToday={cd.date === today}
+              todos={getTodos(cd.date)}
+              onAdd={addTodo}
+              onToggle={toggleTodo}
+              onRemove={removeTodo}
             />
-            <button
-              className={styles.addButton}
-              onClick={handleAddTodo}
-              disabled={!newTodoText.trim()}
-            >
-              Add
-            </button>
-          </div>
+          ))}
         </div>
       </div>
     </Modal>

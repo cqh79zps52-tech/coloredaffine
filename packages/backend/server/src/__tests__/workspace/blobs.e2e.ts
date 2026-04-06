@@ -83,7 +83,8 @@ test('should list blobs', async t => {
   const ret = await listBlobs(app, workspace.id);
   t.is(ret.length, 2, 'failed to list blobs');
   // list blob result is not ordered
-  t.deepEqual(ret.map(x => x.key).sort(), [hash1, hash2].sort());
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  t.deepEqual(ret.map(x => x.key).sort(cmp), [hash1, hash2].sort(cmp));
 });
 
 test('should create pending blob upload with graphql fallback', async t => {
