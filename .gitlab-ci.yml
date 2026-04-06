@@ -1,0 +1,292 @@
+# GitLab CI/CD pipeline for AFFiNE (mirrored from GitHub).
+#
+# Runs on GitLab.com SaaS shared runners:
+#   - Linux Docker (default) for lint/typecheck/test/web/server/Rust
+#   - saas-macos-medium-m1 for Electron macOS packaging
+#   - saas-windows-medium-amd64 for Electron Windows packaging
+#
+# Heavy desktop packaging jobs are `when: manual` so they don't burn
+# CI minutes on every push. Trigger them from the pipeline UI or via tags.
+
+stages:
+  - prepare
+  - lint
+  - test
+  - build
+  - package
+
+variables:
+  NODE_VERSION: '22.22.1'
+  RUST_VERSION: '1.94.0'
+  YARN_ENABLE_GLOBAL_CACHE: 'true'
+  YARN_GLOBAL_FOLDER: '$CI_PROJECT_DIR/.yarn/berry'
+  CARGO_HOME: '$CI_PROJECT_DIR/.cargo'
+  CARGO_TERM_COLOR: 'always'
+  DEBUG: 'napi:*'
+  BUILD_TYPE: 'canary'
+  APP_NAME: 'affine'
+  AFFINE_ENV: 'dev'
+  MACOSX_DEPLOYMENT_TARGET: '11.6'
+  DEPLOYMENT_TYPE: 'affine'
+  AFFINE_INDEXER_ENABLED: 'true'
+  NODE_OPTIONS: '--max-old-space-size=8192'
+  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_DEPTH: '20'
+
+# Cancel superseded pipelines on the same ref.
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH =~ /^(canary|beta|stable)$/'
+    - if: '$CI_COMMIT_BRANCH =~ /^v[0-9]+\.[0-9]+\.x(-staging)?$/'
+    - if: '$CI_COMMIT_TAG'
+
+# ---------------------------------------------------------------------------
+# Reusable templates
+# ---------------------------------------------------------------------------
+
+.node-base:
+  image: node:22.22.1-bookworm
+  interruptible: true
+  before_script:
+    - corepack enable
+    - corepack prepare yarn@4.13.0 --activate
+    - yarn --version
+  cache:
+    key:
+      files:
+        - yarn.lock
+    paths:
+      - .yarn/berry/cache
+      - .yarn/install-state.gz
+      - node_modules
+
+.install-deps: &install-deps
+  - yarn install --immutable --inline-builds
+
+.rust-base:
+  image: rust:1.94.0-bookworm
+  interruptible: true
+  variables:
+    CARGO_INCREMENTAL: '0'
+  before_script:
+    - rustc --version && cargo --version
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo/registry/index
+      - .cargo/registry/cache
+      - .cargo/git/db
+      - target
+
+# ---------------------------------------------------------------------------
+# Prepare: install once, share node_modules as artifact
+# ---------------------------------------------------------------------------
+
+install:
+  stage: prepare
+  extends: .node-base
+  script:
+    - *install-deps
+    - yarn affine @affine/i18n build
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - node_modules
+      - .yarn/install-state.gz
+      - packages/frontend/i18n/src/resources
+
+# ---------------------------------------------------------------------------
+# Lint
+# ---------------------------------------------------------------------------
+
+lint:eslint:
+  stage: lint
+  extends: .node-base
+  needs: [install]
+  script:
+    - yarn lint:eslint --max-warnings=0
+
+lint:prettier:
+  stage: lint
+  extends: .node-base
+  needs: [install]
+  script:
+    - yarn lint:prettier
+
+lint:dedupe:
+  stage: lint
+  extends: .node-base
+  needs: [install]
+  script:
+    - yarn dedupe --check
+
+typecheck:
+  stage: lint
+  extends: .node-base
+  needs: [install]
+  script:
+    - yarn typecheck
+
+lint:rust:
+  stage: lint
+  extends: .rust-base
+  script:
+    - rustup component add rustfmt clippy
+    - cargo fmt --all -- --check
+    - cargo clippy --all-targets --all-features -- -D warnings
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+test:unit:
+  stage: test
+  extends: .node-base
+  needs: [install]
+  script:
+    - yarn test
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      junit: junit.xml
+    paths:
+      - coverage/
+
+test:rust:
+  stage: test
+  extends: .rust-base
+  script:
+    - cargo test --workspace --all-features
+
+# ---------------------------------------------------------------------------
+# Build (web + server + native)
+# ---------------------------------------------------------------------------
+
+build:web:
+  stage: build
+  extends: .node-base
+  needs: [install]
+  script:
+    - yarn affine init
+    - yarn affine gql build
+    - yarn affine web build
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - packages/frontend/apps/web/dist/
+
+build:server:
+  stage: build
+  extends: .node-base
+  needs: [install]
+  script:
+    - yarn affine init
+    - yarn affine server build
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - packages/backend/server/dist/
+
+build:server-native:
+  stage: build
+  image: node:22.22.1-bookworm
+  interruptible: true
+  needs: []
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends build-essential curl ca-certificates
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.94.0
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - corepack enable
+    - corepack prepare yarn@4.13.0 --activate
+    - yarn install --immutable --inline-builds
+  script:
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - yarn workspace @affine/server-native build --target x86_64-unknown-linux-gnu
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - packages/backend/native/server-native.*.node
+
+# ---------------------------------------------------------------------------
+# Electron desktop packaging (manual; runs on platform-specific runners)
+# ---------------------------------------------------------------------------
+
+.desktop-rules:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
+    - when: manual
+      allow_failure: true
+
+package:desktop:linux:
+  stage: package
+  extends: [.node-base, .desktop-rules]
+  needs: [install, build:server-native]
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2
+    - yarn affine init
+    - yarn affine electron build
+    - yarn workspace @affine/electron package --platform=linux --arch=x64
+  artifacts:
+    expire_in: 2 weeks
+    paths:
+      - packages/frontend/apps/electron/out/
+
+package:desktop:macos:
+  stage: package
+  extends: .desktop-rules
+  tags:
+    - saas-macos-medium-m1
+  image: macos-14-xcode-15
+  needs: [install]
+  before_script:
+    - brew install node@22 rustup
+    - rustup-init -y --default-toolchain 1.94.0
+    - export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/node@22/bin:$PATH"
+    - corepack enable
+    - corepack prepare yarn@4.13.0 --activate
+    - yarn install --immutable --inline-builds
+  script:
+    - export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/node@22/bin:$PATH"
+    - yarn workspace @affine/server-native build --target aarch64-apple-darwin
+    - yarn affine init
+    - yarn affine electron build
+    - yarn workspace @affine/electron package --platform=darwin --arch=arm64
+  artifacts:
+    expire_in: 2 weeks
+    paths:
+      - packages/frontend/apps/electron/out/
+
+package:desktop:windows:
+  stage: package
+  extends: .desktop-rules
+  tags:
+    - saas-windows-medium-amd64
+  needs: [install]
+  before_script:
+    - choco install -y nodejs-lts --version=22.22.1
+    - choco install -y rustup.install
+    - rustup install 1.94.0
+    - rustup default 1.94.0
+    - corepack enable
+    - corepack prepare yarn@4.13.0 --activate
+    - yarn install --immutable --inline-builds
+  script:
+    - yarn workspace @affine/server-native build --target x86_64-pc-windows-msvc
+    - yarn affine init
+    - yarn affine electron build
+    - yarn workspace @affine/electron package --platform=win32 --arch=x64
+  artifacts:
+    expire_in: 2 weeks
+    paths:
+      - packages/frontend/apps/electron/out/

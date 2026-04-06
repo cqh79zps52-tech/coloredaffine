@@ -45,7 +45,12 @@
     "blocksuite/docs/api/**",
     "packages/frontend/admin/src/config.json",
     "**/test-docs.json",
-    "**/test-blocks.json"
+    "**/test-blocks.json",
+    "server-download/**",
+    "affine-darwin-x64-builds/**",
+    "affine-win32-x64-builds/**",
+    "macos-builds/**",
+    "macos-builds-latest/**"
   ],
   "rules": {
     "no-empty-static-block": "error",
