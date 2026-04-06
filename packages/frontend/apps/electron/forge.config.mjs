@@ -328,10 +328,20 @@ export default {
     name: productName,
     appBundleId: fromBuildIdentifier(appIdMap),
     icon: icnsPath,
-    osxSign: {
-      identity: 'Developer ID Application: TOEVERYTHING PTE. LTD.',
-      'hardened-runtime': true,
-    },
+    // When a real Developer ID cert is provided via secrets, sign with it
+    // and enable hardened runtime (required for notarization).
+    // Otherwise fall back to ad-hoc signing (`identity: '-'`), which is the
+    // minimum required for any binary to launch on Apple Silicon and avoids
+    // the misleading "ColoredAFFiNE is damaged and cannot be opened" error
+    // that macOS reports for completely unsigned bundles. Users still need
+    // to clear the quarantine xattr after download:
+    //   xattr -cr /Applications/ColoredAFFiNE.app
+    osxSign: process.env.CERTIFICATES_P12
+      ? {
+          identity: 'Developer ID Application: TOEVERYTHING PTE. LTD.',
+          'hardened-runtime': true,
+        }
+      : { identity: '-' },
     electronZipDir: process.env.ELECTRON_FORGE_ELECTRON_ZIP_DIR,
     osxNotarize: process.env.APPLE_ID
       ? {
@@ -389,7 +399,7 @@ export default {
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
       [FuseV1Options.EnableNodeCliInspectArguments]: false,
-      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
