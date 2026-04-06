@@ -328,20 +328,17 @@ export default {
     name: productName,
     appBundleId: fromBuildIdentifier(appIdMap),
     icon: icnsPath,
-    // When a real Developer ID cert is provided via secrets, sign with it
-    // and enable hardened runtime (required for notarization).
-    // Otherwise fall back to ad-hoc signing (`identity: '-'`), which is the
-    // minimum required for any binary to launch on Apple Silicon and avoids
-    // the misleading "ColoredAFFiNE is damaged and cannot be opened" error
-    // that macOS reports for completely unsigned bundles. Users still need
-    // to clear the quarantine xattr after download:
-    //   xattr -cr /Applications/ColoredAFFiNE.app
+    // Real Developer ID signing only runs when a cert is provided via secrets.
+    // Ad-hoc signing for the no-cert case is handled in the postPackage hook
+    // below using `codesign` directly, because @electron/osx-sign does not
+    // honour `identity: '-'` and silently swallows its own errors inside the
+    // packager's listr spinner, leaving the bundle completely unsigned.
     osxSign: process.env.CERTIFICATES_P12
       ? {
           identity: 'Developer ID Application: TOEVERYTHING PTE. LTD.',
           'hardened-runtime': true,
         }
-      : { identity: '-' },
+      : undefined,
     electronZipDir: process.env.ELECTRON_FORGE_ELECTRON_ZIP_DIR,
     osxNotarize: process.env.APPLE_ID
       ? {
@@ -420,6 +417,60 @@ export default {
           path.join(__dirname, '..', '..', '..', 'node_modules'),
           path.join(__dirname, 'node_modules')
         );
+      }
+    },
+    postPackage: async (_forgeConfig, packageResult) => {
+      // Ad-hoc sign the packaged .app bundle on macOS when no real Developer
+      // ID cert is configured. Apple Silicon's kernel rejects any binary
+      // whose code pages have no signature, killing the process with
+      //   SIGKILL (Code Signature Invalid) / Invalid Page
+      // before any JavaScript runs. The user sees the misleading message
+      // "ColoredAFFiNE is damaged and cannot be opened".
+      //
+      // We do this here, in a postPackage hook, instead of via forge's
+      // built-in `osxSign` config, because @electron/osx-sign does not honour
+      // `identity: '-'` and its failures are eaten by the listr spinner.
+      // After this hook, the makers (.dmg / .zip) will pick up the signed
+      // .app, so the distributable users download is also signed.
+      if (process.env.CERTIFICATES_P12) return; // real signing path handled by forge
+      if (packageResult.platform !== 'darwin') return;
+
+      for (const appPath of packageResult.outputPaths) {
+        // Each entry is a directory like `out/canary/ColoredAFFiNE-darwin-arm64/`.
+        // Find the .app inside it.
+        let appsToSign = [];
+        try {
+          const entries = await readdir(appPath);
+          appsToSign = entries
+            .filter(name => name.endsWith('.app'))
+            .map(name => path.join(appPath, name));
+        } catch {
+          continue;
+        }
+        for (const app of appsToSign) {
+          console.log(`[postPackage] ad-hoc signing ${app}`);
+          const result = cp.spawnSync(
+            'codesign',
+            ['--force', '--deep', '--sign', '-', '--timestamp=none', app],
+            { stdio: 'inherit' }
+          );
+          if (result.status !== 0) {
+            throw new Error(
+              `codesign failed for ${app} (exit ${result.status})`
+            );
+          }
+          // Verify the signature so a future regression fails the build loudly.
+          const verify = cp.spawnSync(
+            'codesign',
+            ['--verify', '--deep', '--strict', app],
+            { stdio: 'inherit' }
+          );
+          if (verify.status !== 0) {
+            throw new Error(
+              `codesign --verify failed for ${app} (exit ${verify.status})`
+            );
+          }
+        }
       }
     },
     generateAssets: async (_, platform, arch) => {
