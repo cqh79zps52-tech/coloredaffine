@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { WorkspaceService } from '@affine/core/modules/workspace';
+import { useService } from '@toeverything/infra';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type * as Y from 'yjs';
 
 import type { Habit, ResetInterval } from './types';
 
-const STORAGE_KEY = 'affine-classics-habits';
+const Y_MAP_KEY = 'affine-classics-habits';
+const LEGACY_LS_KEY = 'affine-classics-habits';
+const LS_MIGRATED_FLAG = 'affine-classics-habits-migrated';
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -28,31 +33,57 @@ function shouldReset(habit: Habit): boolean {
   }
 }
 
-function processResets(habits: Habit[]): Habit[] {
-  const now = Date.now();
-  let changed = false;
-  const result = habits.map(h => {
-    if (h.checked && shouldReset(h)) {
-      changed = true;
-      return { ...h, checked: false, lastReset: now };
-    }
-    return h;
-  });
-  return changed ? result : habits;
+function readAll(yMap: Y.Map<Habit>): Habit[] {
+  return Array.from(yMap.values());
 }
 
-function load(): Habit[] {
+/**
+ * One-shot migration of legacy `localStorage`-stored habits into the
+ * first workspace the user opens after the upgrade. Subsequent workspaces
+ * start empty.
+ */
+function migrateFromLocalStorageIfNeeded(yMap: Y.Map<Habit>) {
+  if (typeof localStorage === 'undefined') return;
+  if (localStorage.getItem(LS_MIGRATED_FLAG)) return;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return processResets(JSON.parse(raw) as Habit[]);
+    const raw = localStorage.getItem(LEGACY_LS_KEY);
+    if (raw && yMap.size === 0) {
+      const arr = JSON.parse(raw) as Habit[];
+      const doc = yMap.doc;
+      const apply = () => {
+        for (const h of arr) {
+          if (h && typeof h.id === 'string') yMap.set(h.id, h);
+        }
+      };
+      if (doc) doc.transact(apply);
+      else apply();
+    }
   } catch {
-    return [];
+    // ignore corrupt legacy payloads
   }
+  localStorage.setItem(LS_MIGRATED_FLAG, '1');
+  localStorage.removeItem(LEGACY_LS_KEY);
 }
 
-function save(habits: Habit[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
+/**
+ * Roll forward any habits whose reset window has elapsed. Writes back into
+ * the Y.Map inside a single transaction so observers see one update.
+ */
+function runResetsAndPersist(yMap: Y.Map<Habit>) {
+  const now = Date.now();
+  const resets: Habit[] = [];
+  for (const h of yMap.values()) {
+    if (h.checked && shouldReset(h)) {
+      resets.push({ ...h, checked: false, lastReset: now });
+    }
+  }
+  if (resets.length === 0) return;
+  const doc = yMap.doc;
+  const apply = () => {
+    for (const h of resets) yMap.set(h.id, h);
+  };
+  if (doc) doc.transact(apply);
+  else apply();
 }
 
 export function getStreak(habit: Habit): { current: number; total: number } {
@@ -100,25 +131,43 @@ export function getDaysSinceCreation(habit: Habit): number {
 }
 
 export function useHabits() {
-  const [habits, setHabits] = useState<Habit[]>(load);
+  const workspaceService = useService(WorkspaceService);
+  const yMap = useMemo(
+    () => workspaceService.workspace.rootYDoc.getMap<Habit>(Y_MAP_KEY),
+    [workspaceService]
+  );
 
-  // Periodically check for resets
+  const [habits, setHabits] = useState<Habit[]>(() => {
+    migrateFromLocalStorageIfNeeded(yMap);
+    runResetsAndPersist(yMap);
+    return readAll(yMap);
+  });
+
+  // Re-sync if the workspace switches under us.
+  useEffect(() => {
+    migrateFromLocalStorageIfNeeded(yMap);
+    runResetsAndPersist(yMap);
+    setHabits(readAll(yMap));
+  }, [yMap]);
+
+  // Reactively follow Y.Map mutations (local + remote/sync).
+  useEffect(() => {
+    const onChange = () => setHabits(readAll(yMap));
+    yMap.observe(onChange);
+    return () => yMap.unobserve(onChange);
+  }, [yMap]);
+
+  // Periodically check for reset windows elapsing while the app is open.
   useEffect(() => {
     const interval = setInterval(() => {
-      setHabits(prev => {
-        const processed = processResets(prev);
-        if (processed !== prev) {
-          save(processed);
-        }
-        return processed;
-      });
-    }, 60_000); // check every minute
+      runResetsAndPersist(yMap);
+    }, 60_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [yMap]);
 
-  const addHabit = useCallback((name: string, resetInterval: ResetInterval) => {
-    setHabits(prev => {
-      const newHabit: Habit = {
+  const addHabit = useCallback(
+    (name: string, resetInterval: ResetInterval) => {
+      const habit: Habit = {
         id: generateId(),
         name,
         resetInterval,
@@ -127,37 +176,33 @@ export function useHabits() {
         lastReset: Date.now(),
         checked: false,
       };
-      const next = [...prev, newHabit];
-      save(next);
-      return next;
-    });
-  }, []);
+      yMap.set(habit.id, habit);
+    },
+    [yMap]
+  );
 
-  const toggleHabit = useCallback((id: string) => {
-    setHabits(prev => {
-      const next = prev.map(h => {
-        if (h.id !== id) return h;
-        const today = todayStr();
-        const newChecked = !h.checked;
-        const completedDates = newChecked
-          ? h.completedDates.includes(today)
-            ? h.completedDates
-            : [...h.completedDates, today]
-          : h.completedDates.filter(d => d !== today);
-        return { ...h, checked: newChecked, completedDates };
-      });
-      save(next);
-      return next;
-    });
-  }, []);
+  const toggleHabit = useCallback(
+    (id: string) => {
+      const h = yMap.get(id);
+      if (!h) return;
+      const today = todayStr();
+      const newChecked = !h.checked;
+      const completedDates = newChecked
+        ? h.completedDates.includes(today)
+          ? h.completedDates
+          : [...h.completedDates, today]
+        : h.completedDates.filter(d => d !== today);
+      yMap.set(id, { ...h, checked: newChecked, completedDates });
+    },
+    [yMap]
+  );
 
-  const removeHabit = useCallback((id: string) => {
-    setHabits(prev => {
-      const next = prev.filter(h => h.id !== id);
-      save(next);
-      return next;
-    });
-  }, []);
+  const removeHabit = useCallback(
+    (id: string) => {
+      yMap.delete(id);
+    },
+    [yMap]
+  );
 
   return { habits, addHabit, toggleHabit, removeHabit };
 }
