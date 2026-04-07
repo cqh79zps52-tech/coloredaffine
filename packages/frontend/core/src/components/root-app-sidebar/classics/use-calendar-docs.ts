@@ -1,29 +1,50 @@
-import { DocsService } from '@affine/core/modules/doc';
+/**
+ * Storage layer for the calendar mini-editor.
+ *
+ * Each day's content is a small array of `MiniBlock`s persisted directly
+ * inside the workspace root Y.Doc. We deliberately do *not* create a
+ * full workspace doc per day any more — that approach mounted a real
+ * BlockSuite editor inside every cell, which was both heavy and racy
+ * (multiple editors fighting over `globalThis.currentEditor`). Storing
+ * the blocks ourselves keeps each cell to a few React inputs and lets
+ * any number of cells be edited at the same time.
+ *
+ * The Y.Map values are plain JSON; conflict resolution is last-write-
+ * wins per day. That's fine for the personal-notes use case the
+ * calendar is built for.
+ */
 import { WorkspaceService } from '@affine/core/modules/workspace';
 import { useService } from '@toeverything/infra';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type * as Y from 'yjs';
 
-import type { CalendarDay } from './types';
+import type { CalendarDay, MiniBlock } from './types';
 
-const Y_MAP_KEY = 'affine-classics-calendar';
+const Y_MAP_KEY = 'affine-classics-calendar-v2';
 const LEGACY_LS_KEY = 'affine-classics-calendar';
 const LS_MIGRATED_FLAG = 'affine-classics-calendar-migrated';
 
-function readAll(yMap: Y.Map<CalendarDay>): Map<string, string> {
-  const result = new Map<string, string>();
+function readAll(yMap: Y.Map<CalendarDay>): Map<string, MiniBlock[]> {
+  const result = new Map<string, MiniBlock[]>();
   for (const [date, day] of yMap.entries()) {
-    if (day && typeof day === 'object' && typeof day.docId === 'string') {
-      result.set(date, day.docId);
+    if (
+      day &&
+      typeof day === 'object' &&
+      typeof day.date === 'string' &&
+      Array.isArray(day.blocks)
+    ) {
+      result.set(date, day.blocks);
     }
   }
   return result;
 }
 
 /**
- * One-shot cleanup of the legacy `localStorage` payload. The old format
- * stored ad-hoc todos per day; we no longer use that — each day now maps
- * to a real workspace doc — so we just discard the legacy data.
+ * One-shot cleanup of the legacy `localStorage` payload from the very
+ * first iteration of this feature. Old per-day workspace docs created
+ * by the previous (BlockSuite-backed) implementation are intentionally
+ * left in place — they're harmless and the user may still want to
+ * reach them through the regular sidebar.
  */
 function clearLegacyLocalStorageIfNeeded() {
   if (typeof localStorage === 'undefined') return;
@@ -32,63 +53,74 @@ function clearLegacyLocalStorageIfNeeded() {
   localStorage.removeItem(LEGACY_LS_KEY);
 }
 
-/**
- * Calendar storage: each day maps to a workspace doc id. Docs are
- * created lazily the first time a day is opened.
- */
-export function useCalendarDocs() {
+export interface UseCalendarDocsResult {
+  /** Returns the blocks for a given day, or an empty array if none. */
+  getBlocks: (date: string) => MiniBlock[];
+  /** Persists the blocks for a given day. */
+  setBlocks: (date: string, blocks: MiniBlock[]) => void;
+  /** True if at least one non-empty block exists for the given day. */
+  hasContent: (date: string) => boolean;
+}
+
+export function useCalendarDocs(): UseCalendarDocsResult {
   const workspaceService = useService(WorkspaceService);
-  const docsService = useService(DocsService);
 
   const yMap = useMemo(
     () => workspaceService.workspace.rootYDoc.getMap<CalendarDay>(Y_MAP_KEY),
     [workspaceService]
   );
 
-  const [dateToDocId, setDateToDocId] = useState<Map<string, string>>(() => {
+  const [snapshot, setSnapshot] = useState<Map<string, MiniBlock[]>>(() => {
     clearLegacyLocalStorageIfNeeded();
     return readAll(yMap);
   });
 
   useEffect(() => {
     clearLegacyLocalStorageIfNeeded();
-    setDateToDocId(readAll(yMap));
+    setSnapshot(readAll(yMap));
   }, [yMap]);
 
   useEffect(() => {
-    const onChange = () => setDateToDocId(readAll(yMap));
+    const onChange = () => setSnapshot(readAll(yMap));
     yMap.observe(onChange);
     return () => yMap.unobserve(onChange);
   }, [yMap]);
 
-  const getDocId = useCallback(
-    (date: string): string | undefined => {
-      return dateToDocId.get(date);
-    },
-    [dateToDocId]
+  const getBlocks = useCallback(
+    (date: string): MiniBlock[] => snapshot.get(date) ?? [],
+    [snapshot]
   );
 
-  /**
-   * Returns the doc id for the given day, creating it on demand. The
-   * doc's title is set to the date so it's easy to find from search.
-   */
-  const ensureDocForDate = useCallback(
-    (date: string): string => {
-      const existing = yMap.get(date);
-      if (existing && typeof existing.docId === 'string') {
-        // Defensive: make sure the doc still exists in the workspace.
-        const stillExists = docsService.list.doc$(existing.docId).value;
-        if (stillExists) return existing.docId;
+  const hasContent = useCallback(
+    (date: string): boolean => {
+      const blocks = snapshot.get(date);
+      if (!blocks || blocks.length === 0) return false;
+      return blocks.some(b => b.text.trim().length > 0);
+    },
+    [snapshot]
+  );
+
+  const setBlocks = useCallback(
+    (date: string, blocks: MiniBlock[]) => {
+      // Drop trailing empty paragraphs to keep the stored payload tight
+      // and avoid the "phantom empty cell looks populated" problem.
+      let end = blocks.length;
+      while (
+        end > 0 &&
+        blocks[end - 1].type === 'p' &&
+        blocks[end - 1].text === ''
+      ) {
+        end--;
       }
-      const doc = docsService.createDoc({
-        title: date,
-        primaryMode: 'page',
-      });
-      yMap.set(date, { date, docId: doc.id });
-      return doc.id;
+      const trimmed = end === blocks.length ? blocks : blocks.slice(0, end);
+      if (trimmed.length === 0) {
+        yMap.delete(date);
+        return;
+      }
+      yMap.set(date, { date, blocks: trimmed });
     },
-    [yMap, docsService]
+    [yMap]
   );
 
-  return { getDocId, ensureDocForDate };
+  return { getBlocks, setBlocks, hasContent };
 }

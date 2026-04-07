@@ -4,6 +4,9 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { DayEditorCellBody } from './day-editor-cell';
 import * as styles from './styles.css';
+// Each calendar day owns a tiny in-house editor (see mini-editor.tsx).
+// Because nothing in that editor touches global state, every cell can
+// be live at the same time — no more "only one active day" gating.
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_NAMES = [
@@ -75,8 +78,6 @@ interface DayCellProps {
   cellDayNumber: number;
   isCurrentMonth: boolean;
   isToday: boolean;
-  isActive: boolean;
-  onActivate: (date: string) => void;
 }
 
 const DayCell = ({
@@ -84,8 +85,6 @@ const DayCell = ({
   cellDayNumber,
   isCurrentMonth,
   isToday,
-  isActive,
-  onActivate,
 }: DayCellProps) => {
   return (
     <div
@@ -106,11 +105,7 @@ const DayCell = ({
         </span>
       </div>
       {isCurrentMonth ? (
-        <DayEditorCellBody
-          date={cellDate}
-          active={isActive}
-          onActivate={onActivate}
-        />
+        <DayEditorCellBody date={cellDate} />
       ) : (
         <div className={styles.calendarDayBody} />
       )}
@@ -129,13 +124,6 @@ export const CalendarPanel = ({
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
-  // Only one cell mounts the editor at a time. See day-editor-cell.tsx
-  // for the rationale (multiple BlockSuiteEditors race on globals).
-  const [activeDate, setActiveDate] = useState<string | null>(null);
-
-  const handleActivate = useCallback((date: string) => {
-    setActiveDate(date);
-  }, []);
 
   const calendarDays = useMemo(
     () => getCalendarDays(viewYear, viewMonth),
@@ -224,8 +212,6 @@ export const CalendarPanel = ({
               cellDayNumber={cd.day}
               isCurrentMonth={cd.currentMonth}
               isToday={cd.date === today}
-              isActive={cd.currentMonth && cd.date === activeDate}
-              onActivate={handleActivate}
             />
           ))}
         </div>

@@ -1,5 +1,3 @@
-import * as biDirectionalLinkPanelStyles from '@affine/core/blocksuite/block-suite-editor/bi-directional-link-panel.css';
-import * as blockSuiteEditorStyles from '@affine/core/blocksuite/block-suite-editor/styles.css';
 import { cssVarV2 } from '@toeverything/theme/v2';
 import { globalStyle, style } from '@vanilla-extract/css';
 
@@ -343,9 +341,9 @@ export const calendarDayName = style({
   letterSpacing: '0.05em',
 });
 
-// Each day cell hosts a real mini BlockSuite editor — the cell IS the
-// page, not a link to one. Slash commands like /todo, /h1 etc. work
-// natively inside.
+// Each day cell hosts an in-house MiniEditor (mini-editor.tsx) — a few
+// React inputs, no BlockSuite, no per-cell workspace doc. Multiple
+// cells can be edited at the same time.
 export const calendarDayCell = style({
   position: 'relative',
   display: 'flex',
@@ -366,78 +364,92 @@ export const calendarDayBody = style({
   minHeight: 0,
 });
 
-// "Click to write" placeholder shown until the cell is activated. Once
-// the user interacts, this is replaced by a mounted MountedDayEditor.
-export const calendarDayWriteButton = style({
+// ── Mini editor (calendar day cell body) ─────────────────────
+// Hand-rolled tiny editor; see mini-editor.tsx. The styles below try
+// to make a stack of <input>s feel like a continuous block editor:
+// no input borders, tight line height, hover/focus only on the row
+// you're touching.
+export const miniEditor = style({
   flex: 1,
-  width: '100%',
-  border: `1px dashed ${cssVarV2.layer.insideBorder.border}`,
-  borderRadius: 6,
-  background: 'none',
-  color: cssVarV2.text.tertiary,
-  fontSize: 12,
-  cursor: 'pointer',
-  transition: 'background-color 0.15s, border-color 0.15s, color 0.15s',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 1,
+  minHeight: 0,
+  overflow: 'auto',
+  padding: '2px 0',
+});
+
+export const miniRow = style({
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '1px 2px',
+  borderRadius: 3,
   ':hover': {
-    borderColor: cssVarV2.button.primary,
-    color: cssVarV2.button.primary,
     backgroundColor: cssVarV2.layer.background.hoverOverlay,
   },
 });
 
-export const calendarDayEditorWrapper = style({
-  flex: 1,
-  minHeight: 0,
-  overflow: 'auto',
-  borderRadius: 4,
-  // Force the editor to be very compact: tiny side padding, full width,
-  // no enforced min-height (we want it to fit inside the day card).
-  vars: {
-    '--affine-editor-side-padding': '6px',
-    '--affine-editor-width': '100%',
+export const miniRowTodo = style({});
+
+export const miniRowH1 = style({
+  marginTop: 2,
+});
+
+export const miniCheckbox = style({
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  margin: 0,
+  cursor: 'pointer',
+  flexShrink: 0,
+  width: 13,
+  height: 13,
+  minWidth: 13,
+  border: `1.5px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  borderRadius: 3,
+  transition: 'background-color 0.15s, border-color 0.15s',
+  ':hover': {
+    borderColor: cssVarV2.button.primary,
   },
 });
 
-export const calendarDayEditor = style({
-  minHeight: '100%',
-  fontSize: 12,
+globalStyle(`${miniCheckbox}:checked`, {
+  backgroundColor: cssVarV2.button.primary,
+  borderColor: cssVarV2.button.primary,
+  backgroundImage:
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5l3 3 6-6' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+  backgroundSize: '85% 85%',
+  backgroundPosition: 'center',
+  backgroundRepeat: 'no-repeat',
 });
 
-globalStyle(`${calendarDayEditor} .affine-doc-viewport`, {
-  padding: '2px 0',
-});
-
-globalStyle(`${calendarDayEditor} .doc-title-container`, {
-  display: 'none !important',
-});
-
-globalStyle(`${calendarDayEditor} .affine-page-root-block-container`, {
-  padding: '0 !important',
-  fontSize: '12px !important',
-});
-
-// Hide the editor chrome we don't want inside a tiny calendar cell:
-// the "Add icon" button above the title, the inline "Info" properties
-// table, and the "Bi-Directional Links" panel (with its Show button).
-globalStyle(`${calendarDayEditor} .doc-icon-container`, {
-  display: 'none !important',
-});
-globalStyle(
-  `${calendarDayEditor} ${blockSuiteEditorStyles.docPropertiesTableContainer}`,
-  {
-    display: 'none !important',
-  }
-);
-globalStyle(`${calendarDayEditor} ${biDirectionalLinkPanelStyles.container}`, {
-  display: 'none !important',
-});
-
-export const calendarDayEditorLoading = style({
+export const miniInput = style({
   flex: 1,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: 11,
+  minWidth: 0,
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  color: cssVarV2.text.primary,
+  fontSize: 12,
+  lineHeight: 1.35,
+  padding: '1px 2px',
+  fontFamily: 'inherit',
+  // Native placeholder colour is too aggressive against the cell bg.
+  '::placeholder': {
+    color: cssVarV2.text.tertiary,
+    opacity: 1,
+  },
+});
+
+export const miniInputH1 = style({
+  fontSize: 14,
+  fontWeight: 700,
+  color: cssVarV2.text.primary,
+});
+
+export const miniInputDone = style({
+  textDecoration: 'line-through',
   color: cssVarV2.text.tertiary,
 });
 

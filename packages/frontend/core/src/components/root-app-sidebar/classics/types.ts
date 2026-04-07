@@ -17,20 +17,36 @@ export interface Habit {
 }
 
 /**
- * Each calendar day is backed by a real workspace doc, so users can use
- * the full editor (slash commands like /todo, /h1, etc.) on it. We only
- * persist a small mapping from date → docId here.
+ * One block inside a calendar day's mini-editor. Intentionally tiny —
+ * we have one paragraph type, todos, and a single heading level. Slash
+ * commands and rich block types live in the regular page editor; the
+ * calendar grid prioritises being lightweight over being feature-rich.
+ */
+export type MiniBlockType = 'p' | 'todo' | 'h1';
+
+export interface MiniBlock {
+  id: string;
+  type: MiniBlockType;
+  text: string;
+  /** Only meaningful when type === 'todo'. */
+  done?: boolean;
+}
+
+/**
+ * Stored payload for a single calendar day. The mini editor writes
+ * blocks straight into the workspace Y.Doc — no per-day workspace
+ * docs, no BlockSuite editor instances. See `mini-editor.tsx` for the
+ * editor implementation and `use-calendar-docs.ts` for the storage hook.
  */
 export interface CalendarDay {
   /** Format: YYYY-MM-DD */
   date: string;
-  /** Workspace doc id that holds the day's notes. */
-  docId: string;
+  blocks: MiniBlock[];
 }
 
 /**
- * Legacy type kept only so the localStorage migration can still parse
- * old payloads from before per-day docs existed.
+ * Legacy types kept only so older payloads can still be recognised
+ * (and ignored) without crashing the calendar.
  */
 export interface LegacyCalendarTodo {
   id: string;
@@ -41,4 +57,9 @@ export interface LegacyCalendarTodo {
 export interface LegacyCalendarDay {
   date: string;
   todos: LegacyCalendarTodo[];
+}
+
+export interface LegacyCalendarDayDocLink {
+  date: string;
+  docId: string;
 }
