@@ -154,8 +154,8 @@ export const RootAppSidebar = memo((): ReactElement => {
       <SidebarScrollableContainer>
         <NavigationPanelOrganize />
         <CollapsibleSection
-          path={['classics']}
-          title="Classics"
+          path={['utils']}
+          title="Utils"
           contentStyle={{ padding: '6px 8px 0 8px' }}
         >
           <HabitsButton />

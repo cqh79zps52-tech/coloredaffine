@@ -12,6 +12,7 @@ const DEFAULT_COLLAPSABLE_STATE: Record<string, boolean> = {
   favoritesOld: true,
   migrationFavorites: true,
   others: false,
+  utils: false,
 };
 
 export class NavigationPanelService extends Service {

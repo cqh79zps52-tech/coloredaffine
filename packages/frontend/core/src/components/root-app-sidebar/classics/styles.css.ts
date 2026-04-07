@@ -133,8 +133,11 @@ const checkboxBase = {
 
 export const habitCheckbox = style({
   ...checkboxBase,
-  width: 20,
-  height: 20,
+  width: 16,
+  height: 16,
+  minWidth: 16,
+  maxWidth: 16,
+  flex: '0 0 16px',
   ':hover': {
     borderColor: cssVarV2.button.primary,
   },
@@ -312,8 +315,8 @@ export const calendarTodayButton = style({
 export const calendarGrid = style({
   display: 'grid',
   gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-  gridAutoRows: 'minmax(120px, 1fr)',
-  gap: 4,
+  gridAutoRows: 'minmax(140px, 1fr)',
+  gap: 6,
   flex: 1,
   minHeight: 0,
 });
@@ -334,9 +337,10 @@ export const calendarDayName = style({
   letterSpacing: '0.05em',
 });
 
-// Each day is a self-contained card: number on top, todo list in the
-// middle, and a sticky add-row at the bottom. No click-to-expand —
-// every day is fully visible at once.
+// Each day cell is a button that opens a real workspace doc. The doc is
+// the actual editing surface — slash commands like /todo, /h1 etc. all
+// work natively there. The cell itself only shows the day number and a
+// small indicator of whether the day already has notes.
 export const calendarDayCell = style({
   position: 'relative',
   display: 'flex',
@@ -344,10 +348,49 @@ export const calendarDayCell = style({
   border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
   borderRadius: 8,
   backgroundColor: cssVarV2.layer.background.primary,
-  padding: 6,
-  gap: 4,
+  padding: 10,
+  gap: 6,
   overflow: 'hidden',
   minHeight: 0,
+});
+
+export const calendarDayCellButton = style({
+  textAlign: 'left',
+  font: 'inherit',
+  cursor: 'pointer',
+  transition: 'background-color 0.15s, border-color 0.15s, transform 0.05s',
+  ':hover': {
+    backgroundColor: cssVarV2.layer.background.hoverOverlay,
+    borderColor: cssVarV2.button.primary,
+  },
+  ':active': {
+    transform: 'scale(0.995)',
+  },
+});
+
+export const calendarDayBody = style({
+  flex: 1,
+  display: 'flex',
+  alignItems: 'flex-start',
+  minHeight: 0,
+});
+
+export const calendarDayBodyText = style({
+  fontSize: 12,
+  color: cssVarV2.text.secondary,
+});
+
+export const calendarDayBodyPlaceholder = style({
+  fontSize: 12,
+  color: cssVarV2.text.tertiary,
+  fontStyle: 'italic',
+});
+
+export const calendarDayDocDot = style({
+  width: 6,
+  height: 6,
+  borderRadius: '50%',
+  backgroundColor: cssVarV2.button.primary,
 });
 
 export const calendarDayCellOtherMonth = style({
@@ -385,112 +428,6 @@ export const calendarDayNumberToday = style({
   backgroundColor: cssVarV2.button.primary,
   color: '#fff',
   fontSize: 12,
-});
-
-export const calendarDayTodoList = style({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2,
-  flex: 1,
-  minHeight: 0,
-  overflowY: 'auto',
-});
-
-export const calendarDayTodoItem = style({
-  display: 'flex',
-  alignItems: 'center',
-  gap: 5,
-  padding: '2px 4px',
-  borderRadius: 4,
-  fontSize: 11,
-  color: cssVarV2.text.primary,
-  ':hover': {
-    backgroundColor: cssVarV2.layer.background.hoverOverlay,
-  },
-});
-
-export const calendarDayTodoText = style({
-  flex: 1,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  fontSize: 11,
-  lineHeight: 1.3,
-});
-
-export const calendarDayTodoDone = style({
-  textDecoration: 'line-through',
-  color: cssVarV2.text.tertiary,
-});
-
-export const calendarDayTodoDelete = style({
-  background: 'none',
-  border: 'none',
-  color: cssVarV2.text.tertiary,
-  cursor: 'pointer',
-  padding: 0,
-  width: 14,
-  height: 14,
-  fontSize: 12,
-  lineHeight: 1,
-  flexShrink: 0,
-  display: 'none',
-  ':hover': {
-    color: cssVarV2.text.primary,
-  },
-});
-
-globalStyle(`${calendarDayTodoItem}:hover ${calendarDayTodoDelete}`, {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-});
-
-// Smaller checkbox variant for inside calendar cells.
-export const calendarTodoCheckbox = style({
-  ...checkboxBase,
-  width: 14,
-  height: 14,
-  borderRadius: 3,
-  ':hover': {
-    borderColor: cssVarV2.button.primary,
-  },
-});
-globalStyle(`${calendarTodoCheckbox}:checked`, checkedStyle);
-
-// + button anchored at the bottom of each day cell. Clicking it
-// reveals an inline input row in place.
-export const calendarDayAddButton = style({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: '100%',
-  height: 22,
-  padding: 0,
-  border: `1px dashed ${cssVarV2.layer.insideBorder.border}`,
-  borderRadius: 4,
-  background: 'none',
-  color: cssVarV2.text.tertiary,
-  fontSize: 14,
-  lineHeight: 1,
-  cursor: 'pointer',
-  ':hover': {
-    borderColor: cssVarV2.button.primary,
-    color: cssVarV2.button.primary,
-    borderStyle: 'solid',
-  },
-});
-
-export const calendarDayAddInput = style({
-  width: '100%',
-  height: 22,
-  padding: '0 6px',
-  borderRadius: 4,
-  border: `1px solid ${cssVarV2.button.primary}`,
-  backgroundColor: cssVarV2.layer.background.primary,
-  color: cssVarV2.text.primary,
-  fontSize: 11,
-  outline: 'none',
 });
 
 // ── Habits panel todo / shared item rows (legacy keys kept for the

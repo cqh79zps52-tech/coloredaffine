@@ -1,16 +1,11 @@
 import { Modal } from '@affine/component';
+import { WorkbenchService } from '@affine/core/modules/workbench';
+import { useService } from '@toeverything/infra';
 import clsx from 'clsx';
-import {
-  type KeyboardEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import * as styles from './styles.css';
-import { useCalendarTodos } from './use-calendar-todos';
+import { useCalendarDocs } from './use-calendar-docs';
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_NAMES = [
@@ -82,10 +77,8 @@ interface DayCellProps {
   cellDayNumber: number;
   isCurrentMonth: boolean;
   isToday: boolean;
-  todos: ReturnType<ReturnType<typeof useCalendarTodos>['getTodos']>;
-  onAdd: (date: string, text: string) => void;
-  onToggle: (date: string, todoId: string) => void;
-  onRemove: (date: string, todoId: string) => void;
+  hasDoc: boolean;
+  onOpen: (date: string) => void;
 }
 
 const DayCell = ({
@@ -93,46 +86,24 @@ const DayCell = ({
   cellDayNumber,
   isCurrentMonth,
   isToday,
-  todos,
-  onAdd,
-  onToggle,
-  onRemove,
+  hasDoc,
+  onOpen,
 }: DayCellProps) => {
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (adding) inputRef.current?.focus();
-  }, [adding]);
-
-  const commit = useCallback(() => {
-    const trimmed = draft.trim();
-    if (trimmed) onAdd(cellDate, trimmed);
-    setDraft('');
-    setAdding(false);
-  }, [draft, cellDate, onAdd]);
-
-  const cancel = useCallback(() => {
-    setDraft('');
-    setAdding(false);
-  }, []);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') commit();
-      else if (e.key === 'Escape') cancel();
-    },
-    [commit, cancel]
-  );
+  const handleClick = useCallback(() => {
+    onOpen(cellDate);
+  }, [cellDate, onOpen]);
 
   return (
-    <div
+    <button
+      type="button"
+      onClick={handleClick}
       className={clsx(
         styles.calendarDayCell,
+        styles.calendarDayCellButton,
         !isCurrentMonth && styles.calendarDayCellOtherMonth,
         isToday && styles.calendarDayCellToday
       )}
+      title={`Open ${cellDate}`}
     >
       <div className={styles.calendarDayHeader}>
         <span
@@ -143,59 +114,18 @@ const DayCell = ({
         >
           {cellDayNumber}
         </span>
+        {hasDoc && <span className={styles.calendarDayDocDot} />}
       </div>
-
-      <div className={styles.calendarDayTodoList}>
-        {todos.map(todo => (
-          <div key={todo.id} className={styles.calendarDayTodoItem}>
-            <input
-              type="checkbox"
-              className={styles.calendarTodoCheckbox}
-              checked={todo.done}
-              onChange={() => onToggle(cellDate, todo.id)}
-            />
-            <span
-              className={clsx(
-                styles.calendarDayTodoText,
-                todo.done && styles.calendarDayTodoDone
-              )}
-              title={todo.text}
-            >
-              {todo.text}
-            </span>
-            <button
-              type="button"
-              className={styles.calendarDayTodoDelete}
-              onClick={() => onRemove(cellDate, todo.id)}
-              title="Remove task"
-            >
-              ×
-            </button>
-          </div>
-        ))}
+      <div className={styles.calendarDayBody}>
+        {hasDoc ? (
+          <span className={styles.calendarDayBodyText}>Open notes</span>
+        ) : (
+          <span className={styles.calendarDayBodyPlaceholder}>
+            Click to write…
+          </span>
+        )}
       </div>
-
-      {adding ? (
-        <input
-          ref={inputRef}
-          className={styles.calendarDayAddInput}
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={commit}
-          placeholder="New task…"
-        />
-      ) : (
-        <button
-          type="button"
-          className={styles.calendarDayAddButton}
-          onClick={() => setAdding(true)}
-          title="Add a task"
-        >
-          +
-        </button>
-      )}
-    </div>
+    </button>
   );
 };
 
@@ -211,7 +141,8 @@ export const CalendarPanel = ({
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
 
-  const { getTodos, addTodo, toggleTodo, removeTodo } = useCalendarTodos();
+  const { getDocId, ensureDocForDate } = useCalendarDocs();
+  const workbenchService = useService(WorkbenchService);
 
   const calendarDays = useMemo(
     () => getCalendarDays(viewYear, viewMonth),
@@ -243,6 +174,15 @@ export const CalendarPanel = ({
     setViewYear(d.getFullYear());
     setViewMonth(d.getMonth());
   }, [setViewYear, setViewMonth]);
+
+  const handleOpenDay = useCallback(
+    (date: string) => {
+      const docId = ensureDocForDate(date);
+      workbenchService.workbench.openDoc(docId);
+      onOpenChange(false);
+    },
+    [ensureDocForDate, workbenchService, onOpenChange]
+  );
 
   return (
     <Modal
@@ -300,10 +240,8 @@ export const CalendarPanel = ({
               cellDayNumber={cd.day}
               isCurrentMonth={cd.currentMonth}
               isToday={cd.date === today}
-              todos={getTodos(cd.date)}
-              onAdd={addTodo}
-              onToggle={toggleTodo}
-              onRemove={removeTodo}
+              hasDoc={!!getDocId(cd.date)}
+              onOpen={handleOpenDay}
             />
           ))}
         </div>

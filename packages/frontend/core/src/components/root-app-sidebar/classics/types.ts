@@ -16,14 +16,29 @@ export interface Habit {
   checked: boolean;
 }
 
-export interface CalendarTodo {
+/**
+ * Each calendar day is backed by a real workspace doc, so users can use
+ * the full editor (slash commands like /todo, /h1, etc.) on it. We only
+ * persist a small mapping from date → docId here.
+ */
+export interface CalendarDay {
+  /** Format: YYYY-MM-DD */
+  date: string;
+  /** Workspace doc id that holds the day's notes. */
+  docId: string;
+}
+
+/**
+ * Legacy type kept only so the localStorage migration can still parse
+ * old payloads from before per-day docs existed.
+ */
+export interface LegacyCalendarTodo {
   id: string;
   text: string;
   done: boolean;
 }
 
-export interface CalendarDay {
-  /** Format: YYYY-MM-DD */
+export interface LegacyCalendarDay {
   date: string;
-  todos: CalendarTodo[];
+  todos: LegacyCalendarTodo[];
 }
