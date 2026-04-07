@@ -102,22 +102,22 @@ export function useCalendarDocs(): UseCalendarDocsResult {
 
   const setBlocks = useCallback(
     (date: string, blocks: MiniBlock[]) => {
-      // Drop trailing empty paragraphs to keep the stored payload tight
-      // and avoid the "phantom empty cell looks populated" problem.
-      let end = blocks.length;
-      while (
-        end > 0 &&
-        blocks[end - 1].type === 'p' &&
-        blocks[end - 1].text === ''
-      ) {
-        end--;
-      }
-      const trimmed = end === blocks.length ? blocks : blocks.slice(0, end);
-      if (trimmed.length === 0) {
+      // Only delete the entry when the day has nothing meaningful in
+      // it at all. We deliberately do *not* trim trailing empty
+      // paragraphs any more — that broke the user-facing "demote a
+      // todo back to text" gesture: when the editor demoted an empty
+      // todo to an empty paragraph, we'd silently strip it from
+      // storage, the textarea unmounted, and focus jumped away.
+      // Keeping the empty paragraph around lets the user actually
+      // *land* on it before the next backspace merges into the line
+      // above, which is the two-step Backspace dance every other note
+      // editor uses.
+      const allEmpty = blocks.every(b => b.type === 'p' && b.text === '');
+      if (blocks.length === 0 || allEmpty) {
         yMap.delete(date);
         return;
       }
-      yMap.set(date, { date, blocks: trimmed });
+      yMap.set(date, { date, blocks });
     },
     [yMap]
   );
