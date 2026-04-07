@@ -355,6 +355,11 @@ export const MiniEditor = ({
       const input = e.currentTarget;
       const caret = input.selectionStart ?? 0;
       const caretEnd = input.selectionEnd ?? caret;
+      // ALWAYS read the live text from the DOM, not from `block.text`.
+      // The React closure can lag one keystroke behind the textarea
+      // when typing quickly, which made Enter split on stale text and
+      // appear to "eat" the most recent character.
+      const currentText = input.value;
 
       // Slash menu navigation takes priority over normal editor keys
       // when the menu is open and pinned to this block.
@@ -393,8 +398,24 @@ export const MiniEditor = ({
         // inside a single block, since wrapping happens via the
         // textarea itself. Enter creates a fresh block instead.
         e.preventDefault();
-        const before = block.text.slice(0, caret);
-        const after = block.text.slice(caretEnd);
+
+        // Empty list-item / heading + Enter → exit the list. This is
+        // the universal "drop me out of the list" gesture that every
+        // note editor implements; without it, users get stuck in todo
+        // mode with no obvious way back to a plain paragraph.
+        if (
+          (block.type === 'todo' || block.type === 'h1') &&
+          currentText === ''
+        ) {
+          const next = blocks.slice();
+          next[idx] = { id: block.id, type: 'p', text: '' };
+          pendingFocusRef.current = { id: block.id, pos: 0 };
+          emit(next);
+          return;
+        }
+
+        const before = currentText.slice(0, caret);
+        const after = currentText.slice(caretEnd);
         const newBlock: MiniBlock =
           block.type === 'todo'
             ? { id: uid(), type: 'todo', text: after, done: false }
@@ -409,18 +430,25 @@ export const MiniEditor = ({
 
       if (e.key === 'Backspace' && caret === 0 && caretEnd === 0) {
         if (block.type !== 'p') {
+          // Demote to a plain paragraph but keep whatever the user
+          // had typed so far. Use the live DOM value, not the closure.
           e.preventDefault();
           const next = blocks.slice();
-          next[idx] = { id: block.id, type: 'p', text: block.text };
+          next[idx] = { id: block.id, type: 'p', text: currentText };
+          pendingFocusRef.current = { id: block.id, pos: 0 };
           emit(next);
           return;
         }
         if (idx === 0) return;
         e.preventDefault();
         const prev = blocks[idx - 1];
-        const joinAt = prev.text.length;
+        // Read prev's live text from its textarea if we have one;
+        // closure value is fine if not.
+        const prevEl = inputsRef.current.get(prev.id);
+        const prevText = prevEl ? prevEl.value : prev.text;
+        const joinAt = prevText.length;
         const next = blocks.slice();
-        next[idx - 1] = { ...prev, text: prev.text + block.text };
+        next[idx - 1] = { ...prev, text: prevText + currentText };
         next.splice(idx, 1);
         pendingFocusRef.current = { id: prev.id, pos: joinAt };
         emit(next);
@@ -441,8 +469,8 @@ export const MiniEditor = ({
       if (
         e.key === 'ArrowDown' &&
         idx < blocks.length - 1 &&
-        caret === block.text.length &&
-        caretEnd === block.text.length
+        caret === currentText.length &&
+        caretEnd === currentText.length
       ) {
         e.preventDefault();
         const nx = blocks[idx + 1];
