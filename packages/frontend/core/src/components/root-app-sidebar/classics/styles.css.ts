@@ -315,10 +315,14 @@ export const calendarTodayButton = style({
 export const calendarGrid = style({
   display: 'grid',
   gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-  gridAutoRows: 'minmax(140px, 1fr)',
+  gridAutoRows: 'minmax(220px, 1fr)',
   gap: 6,
   flex: 1,
   minHeight: 0,
+  // Each day hosts a real mini editor, so cells need real estate. If
+  // the viewport can't fit every row at the requested minimum height
+  // we'd rather scroll the grid than crush each editor unusably small.
+  overflowY: 'auto',
 });
 
 export const calendarDayNamesRow = style({
@@ -337,10 +341,9 @@ export const calendarDayName = style({
   letterSpacing: '0.05em',
 });
 
-// Each day cell is a button that opens a real workspace doc. The doc is
-// the actual editing surface — slash commands like /todo, /h1 etc. all
-// work natively there. The cell itself only shows the day number and a
-// small indicator of whether the day already has notes.
+// Each day cell hosts a real mini BlockSuite editor — the cell IS the
+// page, not a link to one. Slash commands like /todo, /h1 etc. work
+// natively inside.
 export const calendarDayCell = style({
   position: 'relative',
   display: 'flex',
@@ -348,49 +351,76 @@ export const calendarDayCell = style({
   border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
   borderRadius: 8,
   backgroundColor: cssVarV2.layer.background.primary,
-  padding: 10,
-  gap: 6,
+  padding: 8,
+  gap: 4,
   overflow: 'hidden',
   minHeight: 0,
-});
-
-export const calendarDayCellButton = style({
-  textAlign: 'left',
-  font: 'inherit',
-  cursor: 'pointer',
-  transition: 'background-color 0.15s, border-color 0.15s, transform 0.05s',
-  ':hover': {
-    backgroundColor: cssVarV2.layer.background.hoverOverlay,
-    borderColor: cssVarV2.button.primary,
-  },
-  ':active': {
-    transform: 'scale(0.995)',
-  },
 });
 
 export const calendarDayBody = style({
   flex: 1,
   display: 'flex',
-  alignItems: 'flex-start',
+  flexDirection: 'column',
   minHeight: 0,
 });
 
-export const calendarDayBodyText = style({
-  fontSize: 12,
-  color: cssVarV2.text.secondary,
-});
-
-export const calendarDayBodyPlaceholder = style({
-  fontSize: 12,
+// "Click to write" placeholder shown until the cell is activated. Once
+// the user interacts, this is replaced by a mounted MountedDayEditor.
+export const calendarDayWriteButton = style({
+  flex: 1,
+  width: '100%',
+  border: `1px dashed ${cssVarV2.layer.insideBorder.border}`,
+  borderRadius: 6,
+  background: 'none',
   color: cssVarV2.text.tertiary,
-  fontStyle: 'italic',
+  fontSize: 12,
+  cursor: 'pointer',
+  transition: 'background-color 0.15s, border-color 0.15s, color 0.15s',
+  ':hover': {
+    borderColor: cssVarV2.button.primary,
+    color: cssVarV2.button.primary,
+    backgroundColor: cssVarV2.layer.background.hoverOverlay,
+  },
 });
 
-export const calendarDayDocDot = style({
-  width: 6,
-  height: 6,
-  borderRadius: '50%',
-  backgroundColor: cssVarV2.button.primary,
+export const calendarDayEditorWrapper = style({
+  flex: 1,
+  minHeight: 0,
+  overflow: 'auto',
+  borderRadius: 4,
+  // Force the editor to be very compact: tiny side padding, full width,
+  // no enforced min-height (we want it to fit inside the day card).
+  vars: {
+    '--affine-editor-side-padding': '6px',
+    '--affine-editor-width': '100%',
+  },
+});
+
+export const calendarDayEditor = style({
+  minHeight: '100%',
+  fontSize: 12,
+});
+
+globalStyle(`${calendarDayEditor} .affine-doc-viewport`, {
+  padding: '2px 0',
+});
+
+globalStyle(`${calendarDayEditor} .doc-title-container`, {
+  display: 'none !important',
+});
+
+globalStyle(`${calendarDayEditor} .affine-page-root-block-container`, {
+  padding: '0 !important',
+  fontSize: '12px !important',
+});
+
+export const calendarDayEditorLoading = style({
+  flex: 1,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: 11,
+  color: cssVarV2.text.tertiary,
 });
 
 export const calendarDayCellOtherMonth = style({

@@ -1,11 +1,9 @@
 import { Modal } from '@affine/component';
-import { WorkbenchService } from '@affine/core/modules/workbench';
-import { useService } from '@toeverything/infra';
 import clsx from 'clsx';
 import { useCallback, useMemo, useState } from 'react';
 
+import { DayEditorCellBody } from './day-editor-cell';
 import * as styles from './styles.css';
-import { useCalendarDocs } from './use-calendar-docs';
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_NAMES = [
@@ -77,8 +75,6 @@ interface DayCellProps {
   cellDayNumber: number;
   isCurrentMonth: boolean;
   isToday: boolean;
-  hasDoc: boolean;
-  onOpen: (date: string) => void;
 }
 
 const DayCell = ({
@@ -86,24 +82,14 @@ const DayCell = ({
   cellDayNumber,
   isCurrentMonth,
   isToday,
-  hasDoc,
-  onOpen,
 }: DayCellProps) => {
-  const handleClick = useCallback(() => {
-    onOpen(cellDate);
-  }, [cellDate, onOpen]);
-
   return (
-    <button
-      type="button"
-      onClick={handleClick}
+    <div
       className={clsx(
         styles.calendarDayCell,
-        styles.calendarDayCellButton,
         !isCurrentMonth && styles.calendarDayCellOtherMonth,
         isToday && styles.calendarDayCellToday
       )}
-      title={`Open ${cellDate}`}
     >
       <div className={styles.calendarDayHeader}>
         <span
@@ -114,18 +100,13 @@ const DayCell = ({
         >
           {cellDayNumber}
         </span>
-        {hasDoc && <span className={styles.calendarDayDocDot} />}
       </div>
-      <div className={styles.calendarDayBody}>
-        {hasDoc ? (
-          <span className={styles.calendarDayBodyText}>Open notes</span>
-        ) : (
-          <span className={styles.calendarDayBodyPlaceholder}>
-            Click to write…
-          </span>
-        )}
-      </div>
-    </button>
+      {isCurrentMonth ? (
+        <DayEditorCellBody date={cellDate} />
+      ) : (
+        <div className={styles.calendarDayBody} />
+      )}
+    </div>
   );
 };
 
@@ -140,9 +121,6 @@ export const CalendarPanel = ({
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
-
-  const { getDocId, ensureDocForDate } = useCalendarDocs();
-  const workbenchService = useService(WorkbenchService);
 
   const calendarDays = useMemo(
     () => getCalendarDays(viewYear, viewMonth),
@@ -175,22 +153,13 @@ export const CalendarPanel = ({
     setViewMonth(d.getMonth());
   }, [setViewYear, setViewMonth]);
 
-  const handleOpenDay = useCallback(
-    (date: string) => {
-      const docId = ensureDocForDate(date);
-      workbenchService.workbench.openDoc(docId);
-      onOpenChange(false);
-    },
-    [ensureDocForDate, workbenchService, onOpenChange]
-  );
-
   return (
     <Modal
       open={open}
       onOpenChange={onOpenChange}
       title="Calendar"
-      width="min(95vw, 1400px)"
-      height="min(92vh, 900px)"
+      width="min(98vw, 1800px)"
+      height="min(96vh, 1100px)"
     >
       <div className={styles.calendarModalContent}>
         <div className={styles.calendarHeader}>
@@ -240,8 +209,6 @@ export const CalendarPanel = ({
               cellDayNumber={cd.day}
               isCurrentMonth={cd.currentMonth}
               isToday={cd.date === today}
-              hasDoc={!!getDocId(cd.date)}
-              onOpen={handleOpenDay}
             />
           ))}
         </div>
