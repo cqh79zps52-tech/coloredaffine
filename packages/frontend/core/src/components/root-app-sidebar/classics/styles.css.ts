@@ -1,3 +1,5 @@
+import * as biDirectionalLinkPanelStyles from '@affine/core/blocksuite/block-suite-editor/bi-directional-link-panel.css';
+import * as blockSuiteEditorStyles from '@affine/core/blocksuite/block-suite-editor/styles.css';
 import { cssVarV2 } from '@toeverything/theme/v2';
 import { globalStyle, style } from '@vanilla-extract/css';
 
@@ -412,6 +414,22 @@ globalStyle(`${calendarDayEditor} .doc-title-container`, {
 globalStyle(`${calendarDayEditor} .affine-page-root-block-container`, {
   padding: '0 !important',
   fontSize: '12px !important',
+});
+
+// Hide the editor chrome we don't want inside a tiny calendar cell:
+// the "Add icon" button above the title, the inline "Info" properties
+// table, and the "Bi-Directional Links" panel (with its Show button).
+globalStyle(`${calendarDayEditor} .doc-icon-container`, {
+  display: 'none !important',
+});
+globalStyle(
+  `${calendarDayEditor} ${blockSuiteEditorStyles.docPropertiesTableContainer}`,
+  {
+    display: 'none !important',
+  }
+);
+globalStyle(`${calendarDayEditor} ${biDirectionalLinkPanelStyles.container}`, {
+  display: 'none !important',
 });
 
 export const calendarDayEditorLoading = style({

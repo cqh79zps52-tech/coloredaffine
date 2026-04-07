@@ -13,7 +13,9 @@ import { type Doc, DocsService } from '@affine/core/modules/doc';
 import { type Editor, EditorsService } from '@affine/core/modules/editor';
 import { FrameworkScope, useLiveData, useService } from '@toeverything/infra';
 import {
+  Component,
   lazy,
+  type ReactNode,
   Suspense,
   useCallback,
   useEffect,
@@ -31,6 +33,49 @@ const BlockSuiteEditor = lazy(() =>
   }))
 );
 
+/**
+ * Localised error boundary so a single broken day doesn't take the
+ * whole calendar grid down. Loading a workspace doc into a freshly
+ * mounted editor occasionally throws (e.g. the doc was deleted in
+ * another tab) — we catch that, show a retry hint, and let the rest of
+ * the month keep rendering.
+ */
+class DayCellErrorBoundary extends Component<
+  { onReset: () => void; children: ReactNode },
+  { error: Error | null }
+> {
+  override state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  override componentDidCatch(error: Error) {
+     
+    console.warn('[calendar day cell] editor failed to mount', error);
+  }
+
+  private readonly handleRetry = () => {
+    this.setState({ error: null });
+    this.props.onReset();
+  };
+
+  override render() {
+    if (this.state.error) {
+      return (
+        <button
+          type="button"
+          className={styles.calendarDayWriteButton}
+          onClick={this.handleRetry}
+        >
+          ⟲ Retry
+        </button>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 interface MountedDayEditorProps {
   docId: string;
 }
@@ -38,27 +83,65 @@ interface MountedDayEditorProps {
 /**
  * Loads the doc + editor entities for a given workspace doc id and
  * renders a real BlockSuiteEditor inside the calendar cell.
+ *
+ * The open() call is deferred via requestIdleCallback so a calendar
+ * with many active days doesn't try to construct dozens of doc scopes
+ * inside the same React commit (which is what was triggering the
+ * "Cannot read properties of undefined (reading 'blockSuiteDoc')"
+ * crash).
  */
 const MountedDayEditor = ({ docId }: MountedDayEditorProps) => {
   const docsService = useService(DocsService);
   const docListReady = useLiveData(docsService.list.isReady$);
+  const docRecord = useLiveData(docsService.list.doc$(docId));
   const [doc, setDoc] = useState<Doc | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
 
-  // Open the doc (refcounted via DocsService.open) and release on unmount.
   useEffect(() => {
-    if (!docListReady) return;
-    const record = docsService.list.doc$(docId).value;
-    if (!record) return;
-    const loaded = docsService.loaded(docId);
-    if (loaded) {
-      setDoc(loaded.doc);
-      return () => loaded.release();
+    if (!docListReady || !docRecord) return;
+    let canceled = false;
+    let release: (() => void) | undefined;
+
+    const run = () => {
+      if (canceled) return;
+      try {
+        const loaded = docsService.loaded(docId);
+        if (loaded) {
+          setDoc(loaded.doc);
+          release = loaded.release;
+          return;
+        }
+        const opened = docsService.open(docId);
+        if (canceled) {
+          opened.release();
+          return;
+        }
+        setDoc(opened.doc);
+        release = opened.release;
+      } catch (e) {
+        // Surface the error to the boundary so the cell can offer a
+        // retry instead of crashing the whole calendar.
+         
+        console.warn('[calendar day cell] failed to open doc', docId, e);
+        throw e;
+      }
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+      const handle = requestIdleCallback(run, { timeout: 500 });
+      return () => {
+        canceled = true;
+        cancelIdleCallback(handle);
+        release?.();
+      };
     }
-    const { doc: opened, release } = docsService.open(docId);
-    setDoc(opened);
-    return () => release();
-  }, [docId, docListReady, docsService]);
+    const handle = setTimeout(run, 0);
+    return () => {
+      canceled = true;
+      clearTimeout(handle);
+      release?.();
+    };
+  }, [docId, docListReady, docRecord, docsService]);
 
   // Create a per-cell editor entity scoped to the loaded doc.
   useLayoutEffect(() => {
@@ -113,6 +196,8 @@ export const DayEditorCellBody = ({ date }: DayEditorCellBodyProps) => {
   const [activatedDocId, setActivatedDocId] = useState<string | undefined>(
     existingDocId
   );
+  // bumped on retry to remount the inner MountedDayEditor cleanly
+  const [retryKey, setRetryKey] = useState(0);
 
   // If another tab/observer just created a doc for this date, surface it.
   useEffect(() => {
@@ -126,8 +211,16 @@ export const DayEditorCellBody = ({ date }: DayEditorCellBodyProps) => {
     setActivatedDocId(id);
   }, [ensureDocForDate, date]);
 
+  const handleRetry = useCallback(() => {
+    setRetryKey(k => k + 1);
+  }, []);
+
   if (activatedDocId) {
-    return <MountedDayEditor docId={activatedDocId} />;
+    return (
+      <DayCellErrorBoundary key={retryKey} onReset={handleRetry}>
+        <MountedDayEditor docId={activatedDocId} />
+      </DayCellErrorBoundary>
+    );
   }
 
   return (
