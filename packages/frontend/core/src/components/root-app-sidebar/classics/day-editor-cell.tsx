@@ -51,7 +51,6 @@ class DayCellErrorBoundary extends Component<
   }
 
   override componentDidCatch(error: Error) {
-     
     console.warn('[calendar day cell] editor failed to mount', error);
   }
 
@@ -93,12 +92,17 @@ interface MountedDayEditorProps {
 const MountedDayEditor = ({ docId }: MountedDayEditorProps) => {
   const docsService = useService(DocsService);
   const docListReady = useLiveData(docsService.list.isReady$);
-  const docRecord = useLiveData(docsService.list.doc$(docId));
+  // We deliberately do NOT subscribe to the doc record itself: it
+  // updates on every keystroke (updatedAt changes) and would tear the
+  // mounted editor down + reopen it mid-edit, which both flickers and
+  // races the editor scope into an error.
   const [doc, setDoc] = useState<Doc | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
 
   useEffect(() => {
-    if (!docListReady || !docRecord) return;
+    if (!docListReady) return;
+    // Pull the record once at effect-start without subscribing to it.
+    if (!docsService.list.doc$(docId).value) return;
     let canceled = false;
     let release: (() => void) | undefined;
 
@@ -121,7 +125,7 @@ const MountedDayEditor = ({ docId }: MountedDayEditorProps) => {
       } catch (e) {
         // Surface the error to the boundary so the cell can offer a
         // retry instead of crashing the whole calendar.
-         
+
         console.warn('[calendar day cell] failed to open doc', docId, e);
         throw e;
       }
@@ -141,7 +145,7 @@ const MountedDayEditor = ({ docId }: MountedDayEditorProps) => {
       clearTimeout(handle);
       release?.();
     };
-  }, [docId, docListReady, docRecord, docsService]);
+  }, [docId, docListReady, docsService]);
 
   // Create a per-cell editor entity scoped to the loaded doc.
   useLayoutEffect(() => {
