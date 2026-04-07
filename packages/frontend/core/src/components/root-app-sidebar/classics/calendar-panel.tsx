@@ -75,6 +75,8 @@ interface DayCellProps {
   cellDayNumber: number;
   isCurrentMonth: boolean;
   isToday: boolean;
+  isActive: boolean;
+  onActivate: (date: string) => void;
 }
 
 const DayCell = ({
@@ -82,6 +84,8 @@ const DayCell = ({
   cellDayNumber,
   isCurrentMonth,
   isToday,
+  isActive,
+  onActivate,
 }: DayCellProps) => {
   return (
     <div
@@ -102,7 +106,11 @@ const DayCell = ({
         </span>
       </div>
       {isCurrentMonth ? (
-        <DayEditorCellBody date={cellDate} />
+        <DayEditorCellBody
+          date={cellDate}
+          active={isActive}
+          onActivate={onActivate}
+        />
       ) : (
         <div className={styles.calendarDayBody} />
       )}
@@ -121,6 +129,13 @@ export const CalendarPanel = ({
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
+  // Only one cell mounts the editor at a time. See day-editor-cell.tsx
+  // for the rationale (multiple BlockSuiteEditors race on globals).
+  const [activeDate, setActiveDate] = useState<string | null>(null);
+
+  const handleActivate = useCallback((date: string) => {
+    setActiveDate(date);
+  }, []);
 
   const calendarDays = useMemo(
     () => getCalendarDays(viewYear, viewMonth),
@@ -209,6 +224,8 @@ export const CalendarPanel = ({
               cellDayNumber={cd.day}
               isCurrentMonth={cd.currentMonth}
               isToday={cd.date === today}
+              isActive={cd.currentMonth && cd.date === activeDate}
+              onActivate={handleActivate}
             />
           ))}
         </div>

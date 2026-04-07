@@ -1,13 +1,16 @@
 /**
  * A single calendar day rendered as a self-contained mini editor — the
- * cell IS a workspace doc rather than a link to one. Each cell mounts
- * its own BlockSuiteEditor so that slash commands like /todo, /h1 etc.
- * work natively in place.
+ * cell IS a workspace doc rather than a link to one. Slash commands
+ * like /todo, /h1 etc. work natively in place.
  *
- * Mounting a real editor per day is heavy, so we gate behind interaction:
- * a day with no doc shows a "click to write" placeholder until activated.
- * Once a doc exists for the day, the editor stays mounted while the
- * calendar modal is open so the user sees its content live.
+ * Important: only ONE day cell mounts a BlockSuiteEditor at a time. We
+ * tried mounting an editor in every populated cell simultaneously, but
+ * the BlockSuite editor sets `globalThis.currentEditor` and several
+ * services rely on it being a single live editor; mounting many in
+ * parallel raced into "Cannot read properties of undefined (reading
+ * 'blockSuiteDoc')" crashes a few seconds after typing. Now the active
+ * cell is whichever the user last clicked, and other cells fall back
+ * to a placeholder that the user can click to take focus.
  */
 import { type Doc, DocsService } from '@affine/core/modules/doc';
 import { type Editor, EditorsService } from '@affine/core/modules/editor';
@@ -35,10 +38,7 @@ const BlockSuiteEditor = lazy(() =>
 
 /**
  * Localised error boundary so a single broken day doesn't take the
- * whole calendar grid down. Loading a workspace doc into a freshly
- * mounted editor occasionally throws (e.g. the doc was deleted in
- * another tab) — we catch that, show a retry hint, and let the rest of
- * the month keep rendering.
+ * whole calendar grid down.
  */
 class DayCellErrorBoundary extends Component<
   { onReset: () => void; children: ReactNode },
@@ -80,74 +80,51 @@ interface MountedDayEditorProps {
 }
 
 /**
- * Loads the doc + editor entities for a given workspace doc id and
- * renders a real BlockSuiteEditor inside the calendar cell.
- *
- * The open() call is deferred via requestIdleCallback so a calendar
- * with many active days doesn't try to construct dozens of doc scopes
- * inside the same React commit (which is what was triggering the
- * "Cannot read properties of undefined (reading 'blockSuiteDoc')"
- * crash).
+ * Loads the doc + editor entities for the active day and renders a
+ * real BlockSuiteEditor. There is at most one of these mounted across
+ * the whole calendar at any time, so it's safe to grab the editor's
+ * normal globals.
  */
 const MountedDayEditor = ({ docId }: MountedDayEditorProps) => {
   const docsService = useService(DocsService);
   const docListReady = useLiveData(docsService.list.isReady$);
-  // We deliberately do NOT subscribe to the doc record itself: it
-  // updates on every keystroke (updatedAt changes) and would tear the
-  // mounted editor down + reopen it mid-edit, which both flickers and
-  // races the editor scope into an error.
   const [doc, setDoc] = useState<Doc | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
 
+  // Open the doc and hold a refcount until this cell is unmounted.
+  // Deliberately *not* subscribed to the doc record — its updatedAt
+  // would tick on every keystroke and re-run the effect, racing the
+  // editor scope into the error boundary.
   useEffect(() => {
     if (!docListReady) return;
-    // Pull the record once at effect-start without subscribing to it.
     if (!docsService.list.doc$(docId).value) return;
-    let canceled = false;
+    let released = false;
     let release: (() => void) | undefined;
-
-    const run = () => {
-      if (canceled) return;
-      try {
-        const loaded = docsService.loaded(docId);
-        if (loaded) {
-          setDoc(loaded.doc);
-          release = loaded.release;
-          return;
-        }
+    try {
+      const loaded = docsService.loaded(docId);
+      if (loaded) {
+        setDoc(loaded.doc);
+        release = loaded.release;
+      } else {
         const opened = docsService.open(docId);
-        if (canceled) {
-          opened.release();
-          return;
-        }
         setDoc(opened.doc);
         release = opened.release;
-      } catch (e) {
-        // Surface the error to the boundary so the cell can offer a
-        // retry instead of crashing the whole calendar.
-
-        console.warn('[calendar day cell] failed to open doc', docId, e);
-        throw e;
       }
-    };
-
-    if (typeof requestIdleCallback === 'function') {
-      const handle = requestIdleCallback(run, { timeout: 500 });
-      return () => {
-        canceled = true;
-        cancelIdleCallback(handle);
-        release?.();
-      };
+    } catch (e) {
+      console.warn('[calendar day cell] failed to open doc', docId, e);
+      throw e;
     }
-    const handle = setTimeout(run, 0);
     return () => {
-      canceled = true;
-      clearTimeout(handle);
+      if (released) return;
+      released = true;
+      setDoc(null);
+      setEditor(null);
       release?.();
     };
   }, [docId, docListReady, docsService]);
 
-  // Create a per-cell editor entity scoped to the loaded doc.
+  // One Editor entity per loaded doc. Disposed when the doc changes
+  // or this component unmounts.
   useLayoutEffect(() => {
     if (!doc) return;
     const e = doc.scope.get(EditorsService).createEditor();
@@ -155,7 +132,6 @@ const MountedDayEditor = ({ docId }: MountedDayEditorProps) => {
     setEditor(e);
     return () => {
       e.dispose();
-      setEditor(null);
     };
   }, [doc]);
 
@@ -186,43 +162,44 @@ const MountedDayEditor = ({ docId }: MountedDayEditorProps) => {
 
 interface DayEditorCellBodyProps {
   date: string;
+  active: boolean;
+  onActivate: (date: string) => void;
 }
 
 /**
- * Body of a calendar day cell. If the day already has a backing doc we
- * mount the editor immediately so its content is visible. Otherwise we
- * show a "click to write" placeholder that creates the doc on first
- * interaction.
+ * Body of a calendar day cell. The active cell mounts the real editor;
+ * every other cell shows a placeholder that activates the cell when
+ * clicked. Activating a cell automatically deactivates the previously
+ * active one (handled at the calendar-panel level).
  */
-export const DayEditorCellBody = ({ date }: DayEditorCellBodyProps) => {
+export const DayEditorCellBody = ({
+  date,
+  active,
+  onActivate,
+}: DayEditorCellBodyProps) => {
   const { getDocId, ensureDocForDate } = useCalendarDocs();
   const existingDocId = getDocId(date);
-  const [activatedDocId, setActivatedDocId] = useState<string | undefined>(
-    existingDocId
-  );
-  // bumped on retry to remount the inner MountedDayEditor cleanly
+  // Bump on retry so the error boundary can re-mount cleanly.
   const [retryKey, setRetryKey] = useState(0);
 
-  // If another tab/observer just created a doc for this date, surface it.
-  useEffect(() => {
-    if (existingDocId && !activatedDocId) {
-      setActivatedDocId(existingDocId);
-    }
-  }, [existingDocId, activatedDocId]);
-
   const handleActivate = useCallback(() => {
-    const id = ensureDocForDate(date);
-    setActivatedDocId(id);
-  }, [ensureDocForDate, date]);
+    // Make sure the doc exists *before* activating, so the active cell
+    // always has a valid docId to mount.
+    ensureDocForDate(date);
+    onActivate(date);
+  }, [ensureDocForDate, date, onActivate]);
 
   const handleRetry = useCallback(() => {
     setRetryKey(k => k + 1);
   }, []);
 
-  if (activatedDocId) {
+  if (active) {
+    // ensureDocForDate has already created the doc by the time we get
+    // here, so existingDocId is guaranteed to be defined.
+    const docId = existingDocId ?? ensureDocForDate(date);
     return (
       <DayCellErrorBoundary key={retryKey} onReset={handleRetry}>
-        <MountedDayEditor docId={activatedDocId} />
+        <MountedDayEditor docId={docId} />
       </DayCellErrorBoundary>
     );
   }
@@ -233,7 +210,7 @@ export const DayEditorCellBody = ({ date }: DayEditorCellBodyProps) => {
       className={styles.calendarDayWriteButton}
       onClick={handleActivate}
     >
-      + Click to write
+      {existingDocId ? '📝 Click to edit' : '+ Click to write'}
     </button>
   );
 };
