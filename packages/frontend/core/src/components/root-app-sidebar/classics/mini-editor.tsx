@@ -34,6 +34,11 @@
  *     paragraph:        convert it to a todo.
  *   - Type `[x] `:      convert it to a checked todo.
  *   - Type `# `:        convert it to a heading.
+ *   - Type `/`:         opens the slash command menu (see SLASH_COMMANDS
+ *                      below). The menu filters as you type, ArrowUp /
+ *                      ArrowDown navigates, Enter applies, Escape
+ *                      closes. Selecting a command replaces the current
+ *                      block's type and clears its text.
  */
 import clsx from 'clsx';
 import {
@@ -43,10 +48,12 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 import * as styles from './styles.css';
-import type { MiniBlock } from './types';
+import type { MiniBlock, MiniBlockType } from './types';
 
 function uid(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -54,6 +61,58 @@ function uid(): string {
 
 function emptyParagraph(): MiniBlock {
   return { id: uid(), type: 'p', text: '' };
+}
+
+/**
+ * One slash-command entry. `apply` returns the new shape for the block
+ * being transformed; the editor preserves the block id so React keeps
+ * the same DOM input and the caret can be re-focused after the swap.
+ */
+interface SlashCommand {
+  id: string;
+  label: string;
+  desc: string;
+  /** Substrings that should also match this command from the query. */
+  keywords: string[];
+  apply: () => { type: MiniBlockType; text: string; done?: boolean };
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  {
+    id: 'text',
+    label: 'Text',
+    desc: 'Plain paragraph',
+    keywords: ['paragraph', 'plain', 'p'],
+    apply: () => ({ type: 'p', text: '' }),
+  },
+  {
+    id: 'todo',
+    label: 'To-do',
+    desc: 'Checkbox item',
+    keywords: ['task', 'check', 'checkbox'],
+    apply: () => ({ type: 'todo', text: '', done: false }),
+  },
+  {
+    id: 'done',
+    label: 'Done to-do',
+    desc: 'Checked checkbox item',
+    keywords: ['checked', 'task'],
+    apply: () => ({ type: 'todo', text: '', done: true }),
+  },
+  {
+    id: 'h1',
+    label: 'Heading',
+    desc: 'Big title for the day',
+    keywords: ['title', 'header', 'h1'],
+    apply: () => ({ type: 'h1', text: '' }),
+  },
+];
+
+interface SlashState {
+  blockId: string;
+  query: string;
+  /** Viewport-relative coords of the input bottom-left corner. */
+  anchor: { top: number; left: number };
 }
 
 interface MiniEditorProps {
@@ -86,6 +145,28 @@ export const MiniEditor = ({
   // queue it and run it in a layout effect after the next render.
   const pendingFocusRef = useRef<{ id: string; pos: number } | null>(null);
 
+  // Slash command popup state. `null` means the menu is closed.
+  const [slashState, setSlashState] = useState<SlashState | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+
+  const filteredCommands = useMemo(() => {
+    if (!slashState) return [];
+    const q = slashState.query.trim().toLowerCase();
+    if (!q) return SLASH_COMMANDS;
+    return SLASH_COMMANDS.filter(cmd => {
+      if (cmd.id.includes(q)) return true;
+      if (cmd.label.toLowerCase().includes(q)) return true;
+      return cmd.keywords.some(k => k.includes(q));
+    });
+  }, [slashState]);
+
+  // Reset the highlighted item whenever the query changes — without
+  // this you can end up with an out-of-bounds index after filtering
+  // narrows the list.
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashState?.query]);
+
   useLayoutEffect(() => {
     const pending = pendingFocusRef.current;
     if (!pending) return;
@@ -108,7 +189,12 @@ export const MiniEditor = ({
     for (const key of inputsRef.current.keys()) {
       if (!live.has(key)) inputsRef.current.delete(key);
     }
-  }, [blocks]);
+    // If the block hosting the slash menu was just deleted, close the
+    // menu rather than leaving it pinned to a vanished input.
+    if (slashState && !live.has(slashState.blockId)) {
+      setSlashState(null);
+    }
+  }, [blocks, slashState]);
 
   const focusBlock = useCallback((id: string, pos: number) => {
     const el = inputsRef.current.get(id);
@@ -121,6 +207,14 @@ export const MiniEditor = ({
     }
   }, []);
 
+  /** Computes viewport coords for the slash menu anchored under `id`. */
+  const computeAnchor = useCallback((id: string) => {
+    const el = inputsRef.current.get(id);
+    if (!el) return { top: 0, left: 0 };
+    const r = el.getBoundingClientRect();
+    return { top: r.bottom + 4, left: r.left };
+  }, []);
+
   const handleTextChange = useCallback(
     (idx: number, raw: string) => {
       const block = blocks[idx];
@@ -131,25 +225,65 @@ export const MiniEditor = ({
       if (block.type === 'p') {
         if (raw === '[] ' || raw === '[ ] ') {
           next[idx] = { ...block, type: 'todo', text: '', done: false };
+          setSlashState(null);
           onChange(next);
           return;
         }
         if (raw === '[x] ' || raw === '[X] ') {
           next[idx] = { ...block, type: 'todo', text: '', done: true };
+          setSlashState(null);
           onChange(next);
           return;
         }
         if (raw === '# ') {
           next[idx] = { ...block, type: 'h1', text: '' };
+          setSlashState(null);
           onChange(next);
           return;
         }
       }
 
+      // Slash menu: a `/` at position 0 opens the popup. We still let
+      // the text update normally so the user sees what they typed; the
+      // popup just sits on top until they pick a command or dismiss.
+      if (raw.startsWith('/')) {
+        setSlashState({
+          blockId: block.id,
+          query: raw.slice(1),
+          anchor: computeAnchor(block.id),
+        });
+      } else if (slashState && slashState.blockId === block.id) {
+        setSlashState(null);
+      }
+
       next[idx] = { ...block, text: raw };
       onChange(next);
     },
-    [blocks, onChange]
+    [blocks, onChange, slashState, computeAnchor]
+  );
+
+  const applyCommand = useCallback(
+    (cmd: SlashCommand) => {
+      if (!slashState) return;
+      const idx = blocks.findIndex(b => b.id === slashState.blockId);
+      if (idx === -1) {
+        setSlashState(null);
+        return;
+      }
+      const block = blocks[idx];
+      const shape = cmd.apply();
+      const next = blocks.slice();
+      next[idx] = {
+        id: block.id,
+        type: shape.type,
+        text: shape.text,
+        done: shape.done,
+      };
+      pendingFocusRef.current = { id: block.id, pos: 0 };
+      setSlashState(null);
+      onChange(next);
+    },
+    [blocks, slashState, onChange]
   );
 
   const handleKeyDown = useCallback(
@@ -158,6 +292,38 @@ export const MiniEditor = ({
       const input = e.currentTarget;
       const caret = input.selectionStart ?? 0;
       const caretEnd = input.selectionEnd ?? caret;
+
+      // Slash menu navigation takes priority over normal editor keys
+      // when the menu is open and pinned to this block.
+      if (
+        slashState &&
+        slashState.blockId === block.id &&
+        filteredCommands.length > 0
+      ) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSlashIndex(i => (i + 1) % filteredCommands.length);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSlashIndex(
+            i => (i - 1 + filteredCommands.length) % filteredCommands.length
+          );
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          const cmd = filteredCommands[slashIndex] ?? filteredCommands[0];
+          applyCommand(cmd);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setSlashState(null);
+          return;
+        }
+      }
 
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -209,7 +375,15 @@ export const MiniEditor = ({
         return;
       }
     },
-    [blocks, focusBlock, onChange]
+    [
+      blocks,
+      focusBlock,
+      onChange,
+      slashState,
+      filteredCommands,
+      slashIndex,
+      applyCommand,
+    ]
   );
 
   const toggleTodo = useCallback(
@@ -222,6 +396,23 @@ export const MiniEditor = ({
     },
     [blocks, onChange]
   );
+
+  // Close the slash menu when the input loses focus to anything other
+  // than the menu itself. We do that with a microtask delay so a click
+  // on a menu item still has time to register.
+  const handleBlur = useCallback(() => {
+    setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        active &&
+        active instanceof HTMLElement &&
+        active.dataset.miniSlash === '1'
+      ) {
+        return;
+      }
+      setSlashState(null);
+    }, 0);
+  }, []);
 
   return (
     <div className={styles.miniEditor}>
@@ -259,12 +450,52 @@ export const MiniEditor = ({
               placeholder={showPlaceholder ? placeholder : undefined}
               onChange={e => handleTextChange(i, e.target.value)}
               onKeyDown={e => handleKeyDown(i, e)}
+              onBlur={handleBlur}
               spellCheck={false}
               autoComplete="off"
             />
           </div>
         );
       })}
+
+      {slashState &&
+        filteredCommands.length > 0 &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className={styles.slashMenu}
+            // Anchor coords are viewport-relative, so position: fixed
+            // sidesteps any ancestor `overflow: hidden` clipping.
+            style={{ top: slashState.anchor.top, left: slashState.anchor.left }}
+            role="listbox"
+          >
+            {filteredCommands.map((cmd, i) => (
+              <button
+                key={cmd.id}
+                type="button"
+                data-mini-slash="1"
+                role="option"
+                aria-selected={i === slashIndex}
+                className={clsx(
+                  styles.slashItem,
+                  i === slashIndex && styles.slashItemActive
+                )}
+                // mousedown + preventDefault so the host input keeps
+                // focus and the browser doesn't fire a blur that closes
+                // the menu before the click resolves.
+                onMouseDown={e => {
+                  e.preventDefault();
+                  applyCommand(cmd);
+                }}
+                onMouseEnter={() => setSlashIndex(i)}
+              >
+                <span className={styles.slashItemLabel}>{cmd.label}</span>
+                <span className={styles.slashItemDesc}>{cmd.desc}</span>
+              </button>
+            ))}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

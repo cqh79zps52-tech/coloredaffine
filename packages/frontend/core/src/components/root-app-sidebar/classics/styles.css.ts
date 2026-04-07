@@ -453,6 +453,54 @@ export const miniInputDone = style({
   color: cssVarV2.text.tertiary,
 });
 
+// ── Slash command popup ─────────────────────────────────────
+// Rendered through a portal to document.body using position: fixed,
+// so it can escape the calendar cell's `overflow: hidden`.
+export const slashMenu = style({
+  position: 'fixed',
+  zIndex: 1000,
+  minWidth: 200,
+  maxWidth: 260,
+  padding: 4,
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 1,
+});
+
+export const slashItem = style({
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: 1,
+  padding: '6px 10px',
+  borderRadius: 5,
+  border: 'none',
+  background: 'none',
+  textAlign: 'left',
+  cursor: 'pointer',
+  color: cssVarV2.text.primary,
+  width: '100%',
+});
+
+export const slashItemActive = style({
+  backgroundColor: cssVarV2.layer.background.hoverOverlay,
+});
+
+export const slashItemLabel = style({
+  fontSize: 13,
+  fontWeight: 500,
+  color: cssVarV2.text.primary,
+});
+
+export const slashItemDesc = style({
+  fontSize: 11,
+  color: cssVarV2.text.tertiary,
+});
+
 export const calendarDayCellOtherMonth = style({
   opacity: 0.45,
   backgroundColor: cssVarV2.layer.background.secondary,
