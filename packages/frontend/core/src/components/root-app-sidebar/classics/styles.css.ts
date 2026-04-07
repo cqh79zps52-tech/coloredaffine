@@ -381,10 +381,13 @@ export const miniEditor = style({
 
 export const miniRow = style({
   display: 'flex',
-  alignItems: 'center',
+  // align-items: flex-start so multi-line wrapped textareas don't
+  // drag the checkbox down to the visual middle of the block.
+  alignItems: 'flex-start',
   gap: 6,
   padding: '1px 2px',
   borderRadius: 3,
+  minWidth: 0,
   ':hover': {
     backgroundColor: cssVarV2.layer.background.hoverOverlay,
   },
@@ -400,11 +403,18 @@ export const miniCheckbox = style({
   appearance: 'none',
   WebkitAppearance: 'none',
   margin: 0,
-  cursor: 'pointer',
-  flexShrink: 0,
+  // Hard-lock the size so flex layout can't stretch it horizontally.
+  // Without this, some browsers expanded the native checkbox to fill
+  // its row column.
+  flex: '0 0 13px',
   width: 13,
   height: 13,
   minWidth: 13,
+  maxWidth: 13,
+  minHeight: 13,
+  maxHeight: 13,
+  marginTop: 3,
+  cursor: 'pointer',
   border: `1.5px solid ${cssVarV2.layer.insideBorder.border}`,
   backgroundColor: cssVarV2.layer.background.primary,
   borderRadius: 3,
@@ -427,6 +437,7 @@ globalStyle(`${miniCheckbox}:checked`, {
 export const miniInput = style({
   flex: 1,
   minWidth: 0,
+  width: '100%',
   border: 'none',
   outline: 'none',
   background: 'transparent',
@@ -435,6 +446,15 @@ export const miniInput = style({
   lineHeight: 1.35,
   padding: '1px 2px',
   fontFamily: 'inherit',
+  // textarea-specific: kill the native resize handle, hide the
+  // scrollbar (the JS layout effect grows the height to fit), and
+  // wrap long words instead of clipping them out of the cell.
+  resize: 'none',
+  overflow: 'hidden',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  overflowWrap: 'anywhere',
+  display: 'block',
   // Native placeholder colour is too aggressive against the cell bg.
   '::placeholder': {
     color: cssVarV2.text.tertiary,

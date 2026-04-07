@@ -126,6 +126,13 @@ export const MiniEditor = ({
   onChange,
   placeholder,
 }: MiniEditorProps) => {
+  // Stable "empty placeholder" block. We use this whenever the day
+  // has no persisted blocks, and crucially the same id every time —
+  // see the long comment in the non-empty→empty effect below for why.
+  // useState's lazy initializer runs exactly once per editor instance,
+  // which gives us a non-nullable stable value without a ref dance.
+  const [fallbackBlock] = useState<MiniBlock>(() => emptyParagraph());
+
   // Always render at least one block so the user has something to
   // click into. We never persist a lone empty paragraph (the storage
   // layer trims those out), but the in-memory render needs one. The
@@ -133,17 +140,24 @@ export const MiniEditor = ({
   // a fresh array on every render, which would re-trigger every effect
   // and useCallback below.
   const blocks = useMemo<MiniBlock[]>(
-    () => (value.length === 0 ? [emptyParagraph()] : value),
-    [value]
+    () => (value.length === 0 ? [fallbackBlock] : value),
+    [value, fallbackBlock]
   );
 
-  const inputsRef = useRef<Map<string, HTMLInputElement | null>>(new Map());
+  const inputsRef = useRef<Map<string, HTMLTextAreaElement | null>>(new Map());
 
   // After updates that add/remove/merge blocks we want to place the
   // caret on a specific block at a specific offset. We can't do that
-  // synchronously because the new <input> may not exist yet, so we
+  // synchronously because the new <textarea> may not exist yet, so we
   // queue it and run it in a layout effect after the next render.
   const pendingFocusRef = useRef<{ id: string; pos: number } | null>(null);
+
+  // Did the last render's onChange come from this editor? We use this
+  // flag to decide whether to refocus on a non-empty→empty transition,
+  // so external resets (e.g. another tab clearing the day) don't
+  // hijack focus.
+  const selfEmitRef = useRef(false);
+  const prevValueLenRef = useRef(value.length);
 
   // Slash command popup state. `null` means the menu is closed.
   const [slashState, setSlashState] = useState<SlashState | null>(null);
@@ -166,6 +180,55 @@ export const MiniEditor = ({
   useEffect(() => {
     setSlashIndex(0);
   }, [slashState?.query]);
+
+  /**
+   * Emits a new block list, marking the change as originating from
+   * this editor instance. The marker is consumed in the
+   * non-empty→empty layout effect below to know whether to refocus.
+   */
+  const emit = useCallback(
+    (next: MiniBlock[]) => {
+      selfEmitRef.current = true;
+      onChange(next);
+    },
+    [onChange]
+  );
+
+  // Non-empty → empty transition. Why this exists: when the user
+  // backspaces away the last character of the only block, the storage
+  // layer trims the (now empty) paragraph out and stores nothing,
+  // which means `value` arrives back as `[]`. We then swap to the
+  // fallback block, which has a different React key than the original
+  // — so React unmounts the old <textarea> and mounts a new one,
+  // killing focus mid-typing. Solution: detect that exact transition
+  // and queue a focus on the fallback block id so the user can keep
+  // typing seamlessly.
+  useLayoutEffect(() => {
+    if (
+      selfEmitRef.current &&
+      prevValueLenRef.current > 0 &&
+      value.length === 0
+    ) {
+      pendingFocusRef.current = {
+        id: fallbackBlock.id,
+        pos: 0,
+      };
+    }
+    selfEmitRef.current = false;
+    prevValueLenRef.current = value.length;
+  }, [value, fallbackBlock]);
+
+  // Auto-size every textarea to fit its content. Runs after each
+  // render so newly mounted textareas and edited ones are both
+  // correct on the same frame.
+  useLayoutEffect(() => {
+    for (const b of blocks) {
+      const el = inputsRef.current.get(b.id);
+      if (!el) continue;
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [blocks]);
 
   useLayoutEffect(() => {
     const pending = pendingFocusRef.current;
@@ -226,19 +289,19 @@ export const MiniEditor = ({
         if (raw === '[] ' || raw === '[ ] ') {
           next[idx] = { ...block, type: 'todo', text: '', done: false };
           setSlashState(null);
-          onChange(next);
+          emit(next);
           return;
         }
         if (raw === '[x] ' || raw === '[X] ') {
           next[idx] = { ...block, type: 'todo', text: '', done: true };
           setSlashState(null);
-          onChange(next);
+          emit(next);
           return;
         }
         if (raw === '# ') {
           next[idx] = { ...block, type: 'h1', text: '' };
           setSlashState(null);
-          onChange(next);
+          emit(next);
           return;
         }
       }
@@ -257,9 +320,9 @@ export const MiniEditor = ({
       }
 
       next[idx] = { ...block, text: raw };
-      onChange(next);
+      emit(next);
     },
-    [blocks, onChange, slashState, computeAnchor]
+    [blocks, emit, slashState, computeAnchor]
   );
 
   const applyCommand = useCallback(
@@ -281,13 +344,13 @@ export const MiniEditor = ({
       };
       pendingFocusRef.current = { id: block.id, pos: 0 };
       setSlashState(null);
-      onChange(next);
+      emit(next);
     },
-    [blocks, slashState, onChange]
+    [blocks, slashState, emit]
   );
 
   const handleKeyDown = useCallback(
-    (idx: number, e: ReactKeyboardEvent<HTMLInputElement>) => {
+    (idx: number, e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
       const block = blocks[idx];
       const input = e.currentTarget;
       const caret = input.selectionStart ?? 0;
@@ -326,6 +389,9 @@ export const MiniEditor = ({
       }
 
       if (e.key === 'Enter') {
+        // Always intercept Enter — we never want a literal newline
+        // inside a single block, since wrapping happens via the
+        // textarea itself. Enter creates a fresh block instead.
         e.preventDefault();
         const before = block.text.slice(0, caret);
         const after = block.text.slice(caretEnd);
@@ -337,7 +403,7 @@ export const MiniEditor = ({
         next[idx] = { ...block, text: before };
         next.splice(idx + 1, 0, newBlock);
         pendingFocusRef.current = { id: newBlock.id, pos: 0 };
-        onChange(next);
+        emit(next);
         return;
       }
 
@@ -346,7 +412,7 @@ export const MiniEditor = ({
           e.preventDefault();
           const next = blocks.slice();
           next[idx] = { id: block.id, type: 'p', text: block.text };
-          onChange(next);
+          emit(next);
           return;
         }
         if (idx === 0) return;
@@ -357,28 +423,37 @@ export const MiniEditor = ({
         next[idx - 1] = { ...prev, text: prev.text + block.text };
         next.splice(idx, 1);
         pendingFocusRef.current = { id: prev.id, pos: joinAt };
-        onChange(next);
+        emit(next);
         return;
       }
 
-      if (e.key === 'ArrowUp' && idx > 0) {
+      // ArrowUp/Down only jump across blocks when the caret is on
+      // the very edge of the current textarea — otherwise let the
+      // default behaviour move the caret within the wrapped lines of
+      // the same block.
+      if (e.key === 'ArrowUp' && idx > 0 && caret === 0 && caretEnd === 0) {
         e.preventDefault();
         const prev = blocks[idx - 1];
-        focusBlock(prev.id, Math.min(caret, prev.text.length));
+        focusBlock(prev.id, prev.text.length);
         return;
       }
 
-      if (e.key === 'ArrowDown' && idx < blocks.length - 1) {
+      if (
+        e.key === 'ArrowDown' &&
+        idx < blocks.length - 1 &&
+        caret === block.text.length &&
+        caretEnd === block.text.length
+      ) {
         e.preventDefault();
         const nx = blocks[idx + 1];
-        focusBlock(nx.id, Math.min(caret, nx.text.length));
+        focusBlock(nx.id, 0);
         return;
       }
     },
     [
       blocks,
       focusBlock,
-      onChange,
+      emit,
       slashState,
       filteredCommands,
       slashIndex,
@@ -392,9 +467,9 @@ export const MiniEditor = ({
       if (block.type !== 'todo') return;
       const next = blocks.slice();
       next[idx] = { ...block, done: !block.done };
-      onChange(next);
+      emit(next);
     },
-    [blocks, onChange]
+    [blocks, emit]
   );
 
   // Close the slash menu when the input loses focus to anything other
@@ -437,7 +512,7 @@ export const MiniEditor = ({
                 tabIndex={-1}
               />
             )}
-            <input
+            <textarea
               ref={el => {
                 inputsRef.current.set(b.id, el);
               }}
@@ -453,6 +528,8 @@ export const MiniEditor = ({
               onBlur={handleBlur}
               spellCheck={false}
               autoComplete="off"
+              rows={1}
+              wrap="soft"
             />
           </div>
         );
