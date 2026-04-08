@@ -327,6 +327,9 @@ export const CalendarPanel = ({
         }}
         title={undefined}
         fullScreen
+        // Same close-button offset as the picker view so the X is
+        // not stuck under the iOS status bar.
+        closeButtonOptions={{ className: styles.modalCloseButtonMobileOffset }}
       >
         <MobileDayDetail date={selectedDay} onBack={handleBackFromDetail} />
       </Modal>
@@ -345,6 +348,12 @@ export const CalendarPanel = ({
       width={isMobile ? undefined : 'min(98vw, 1800px)'}
       height={isMobile ? undefined : 'min(96vh, 1100px)'}
       fullScreen={isMobile}
+      // Push the title and close button below the iOS status bar /
+      // notch on mobile. Both classes only fire inside the
+      // [data-full-screen="true"] selector, so the desktop modal
+      // header is unaffected.
+      headerClassName={styles.modalHeaderMobileOffset}
+      closeButtonOptions={{ className: styles.modalCloseButtonMobileOffset }}
     >
       <div className={styles.calendarModalContent}>
         <div className={styles.calendarHeader}>

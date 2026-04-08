@@ -596,29 +596,32 @@ export const MiniEditor = ({
                   styles.slashItem,
                   i === slashIndex && styles.slashItemActive
                 )}
-                // The previous version called `applyCommand` directly
-                // from `onMouseDown`. That synchronously set
-                // `slashState` to null and emitted new blocks, so by
-                // the time React finished the event React had already
-                // unmounted the portal — the corresponding mouseup /
-                // click / touchend then fired on a button that no
-                // longer existed and the user just saw "nothing
-                // happened". On mobile this was even worse because
-                // tap → click can fire without an intermediate
-                // mousedown at all.
+                // History of this handler:
                 //
-                // Split the responsibilities:
-                //   - `onMouseDown` / `onPointerDown` only call
-                //     `preventDefault()` so the host textarea keeps
-                //     focus (otherwise blur → handleBlur() closes the
-                //     menu before the click resolves).
-                //   - `onClick` is the actual confirm action. By the
-                //     time `click` fires the menu is still mounted, so
-                //     the React handler runs cleanly. `click` is
-                //     synthesised on touch end too, so this also
-                //     covers finger taps on mobile.
+                // 1. We started with applyCommand directly inside
+                //    onMouseDown. That synchronously set slashState
+                //    to null and tore the portal down between
+                //    mousedown and click, so onClick never ran.
+                // 2. Split into onMouseDown→preventDefault (keep
+                //    textarea focus) + onPointerDown→preventDefault
+                //    (same idea) + onClick→applyCommand.
+                // 3. That worked on desktop but broke touch: calling
+                //    preventDefault on pointerdown can prevent the
+                //    browser from synthesising a click event on
+                //    touch end, so the user's tap landed nowhere.
+                //
+                // The current shape:
+                //   - onMouseDown: preventDefault to keep the host
+                //     textarea focused on desktop. Mouse-only —
+                //     mousedown isn't reliably fired on touch.
+                //   - NO onPointerDown handler — touch needs the
+                //     default to run so click gets synthesised.
+                //   - onClick: the actual confirm action. By the
+                //     time click fires the menu is still mounted,
+                //     so applyCommand can update state cleanly.
+                //     click is synthesised on touch end without us
+                //     touching pointerdown.
                 onMouseDown={e => e.preventDefault()}
-                onPointerDown={e => e.preventDefault()}
                 onClick={e => {
                   e.preventDefault();
                   applyCommand(cmd);

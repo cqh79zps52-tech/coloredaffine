@@ -64,6 +64,12 @@ export const HabitsPanel = ({
       width={isMobile ? undefined : 'min(96vw, 720px)'}
       height={isMobile ? undefined : 'min(90vh, 760px)'}
       fullScreen={isMobile}
+      // Push the title and close button below the iOS status bar /
+      // notch on mobile. Both classes only fire inside the
+      // [data-full-screen="true"] selector, so the desktop modal
+      // header is unaffected.
+      headerClassName={styles.modalHeaderMobileOffset}
+      closeButtonOptions={{ className: styles.modalCloseButtonMobileOffset }}
     >
       <div className={styles.habitsModalContent}>
         {/* Add habit card */}

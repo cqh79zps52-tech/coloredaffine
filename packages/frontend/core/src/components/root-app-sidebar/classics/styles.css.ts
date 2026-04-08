@@ -245,6 +245,34 @@ export const deleteButton = style({
   },
 });
 
+// ── Modal header / close button mobile offsets ──────────────
+// On mobile the calendar / habits Modal goes fullScreen, but the
+// Modal's built-in title and close button still sit at the default
+// 20px top of the modal content — which on iPhone puts them
+// underneath the status bar / dynamic island. These two classes are
+// passed as headerClassName and closeButtonOptions.className from
+// CalendarPanel and HabitsPanel; they only kick in inside the
+// fullScreen variant (the desktop modal is unaffected).
+//
+// We override the existing closeButton class's `top: 22px` rule by
+// using a more specific selector (attribute + class) so the rule
+// wins on cascade without needing !important.
+export const modalHeaderMobileOffset = style({
+  selectors: {
+    '[data-full-screen="true"] &': {
+      marginTop: 36,
+    },
+  },
+});
+
+export const modalCloseButtonMobileOffset = style({
+  selectors: {
+    '[data-full-screen="true"] &': {
+      top: 58,
+    },
+  },
+});
+
 // ── Calendar (full-page month view) ───────────────────────────
 // Wider, taller modal so the calendar feels like a real page rather
 // than a sidebar popover. The Modal wrapper provides the outer
