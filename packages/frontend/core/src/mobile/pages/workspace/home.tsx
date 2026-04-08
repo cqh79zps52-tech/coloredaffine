@@ -6,6 +6,7 @@ import {
   NavigationPanelFavorites,
   NavigationPanelOrganize,
   NavigationPanelTags,
+  NavigationPanelUtils,
 } from '../../components/navigation';
 import { HomeHeader, RecentDocs } from '../../views';
 
@@ -29,6 +30,7 @@ export const Component = () => {
           <NavigationPanelOrganize />
           <NavigationPanelCollections />
           <NavigationPanelTags />
+          <NavigationPanelUtils />
         </div>
       </SafeArea>
       <AppTabs />
