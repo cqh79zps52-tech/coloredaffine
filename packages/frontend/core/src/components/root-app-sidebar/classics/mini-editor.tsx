@@ -320,23 +320,20 @@ export const MiniEditor = ({
         }
       }
 
-      // Slash menu: a `/` at position 0 opens the popup. We still let
-      // the text update normally so the user sees what they typed; the
-      // popup just sits on top until they pick a command or dismiss.
-      if (raw.startsWith('/')) {
-        setSlashState({
-          blockId: block.id,
-          query: raw.slice(1),
-          anchor: computeAnchor(block.id),
-        });
-      } else if (slashState && slashState.blockId === block.id) {
-        setSlashState(null);
-      }
+      // Slash menu open/close is no longer handled here. The caret-
+      // tracking onSelect handler (`handleSelect` →
+      // `syncSlashFromCaret`) is the single source of truth — it
+      // fires after every keystroke (including this one) because
+      // typing moves the caret, and it scans backwards from the
+      // caret to find a slash trigger anywhere in the line. That
+      // gives us "open the menu when cursor is right after a /"
+      // semantics for free, instead of the old "only open at
+      // position 0" rule.
 
       next[idx] = { ...block, text: raw };
       emit(next);
     },
-    [blocks, emit, slashState, computeAnchor]
+    [blocks, emit]
   );
 
   const applyCommand = useCallback(
@@ -534,35 +531,56 @@ export const MiniEditor = ({
 
   /**
    * Recompute slash menu state from a textarea's current text + caret
-   * position. Used by onSelect on every textarea so the menu opens
-   * not just when the user *types* `/` but also when they click /
-   * arrow-key into a block whose text already starts with `/`. We
-   * keep the rule simple: the menu shows iff the block's text
-   * starts with `/` and the caret has moved past that first
-   * character. The query is everything after the leading slash.
+   * position. The trigger is now positional: scan backwards from the
+   * caret looking for the most recent `/` character. If we find one
+   * before hitting whitespace or a newline, the slash menu is open
+   * with the text between the `/` and the caret as its query.
+   * Otherwise the menu is closed.
+   *
+   * This means the menu opens
+   *   - when the user types `/` (caret lands at slash+1)
+   *   - when the user types `/foo` (caret at slash+4, query "foo")
+   *   - when the user clicks / arrow-keys into the middle of an
+   *     existing `/foo` (cursor anywhere between `/` and the next
+   *     whitespace)
+   * and closes when the user types a space or moves the caret past
+   * a whitespace boundary, matching the way Notion / Linear do it.
    */
   const syncSlashFromCaret = useCallback(
     (block: MiniBlock, input: HTMLTextAreaElement, currentText: string) => {
       const caret = input.selectionStart ?? 0;
-      const opensSlash = currentText.startsWith('/') && caret >= 1;
-      if (opensSlash) {
-        const nextQuery = currentText.slice(1);
-        // Only setState when something actually changed, otherwise
-        // we re-create slashState on every selectionchange and
-        // thrash the dismiss-listener useEffect.
-        if (
-          !slashState ||
-          slashState.blockId !== block.id ||
-          slashState.query !== nextQuery
-        ) {
-          setSlashState({
-            blockId: block.id,
-            query: nextQuery,
-            anchor: computeAnchor(block.id),
-          });
+
+      let slashPos = -1;
+      for (let i = caret - 1; i >= 0; i--) {
+        const ch = currentText[i];
+        if (ch === '/') {
+          slashPos = i;
+          break;
         }
-      } else if (slashState && slashState.blockId === block.id) {
-        setSlashState(null);
+        if (ch === ' ' || ch === '\n' || ch === '\t') break;
+      }
+
+      if (slashPos === -1) {
+        if (slashState && slashState.blockId === block.id) {
+          setSlashState(null);
+        }
+        return;
+      }
+
+      const nextQuery = currentText.slice(slashPos + 1, caret);
+      // Only setState when something actually changed, otherwise we
+      // re-create slashState on every selectionchange and thrash the
+      // dismiss-listener useEffect.
+      if (
+        !slashState ||
+        slashState.blockId !== block.id ||
+        slashState.query !== nextQuery
+      ) {
+        setSlashState({
+          blockId: block.id,
+          query: nextQuery,
+          anchor: computeAnchor(block.id),
+        });
       }
     },
     [slashState, computeAnchor]
@@ -592,6 +610,15 @@ export const MiniEditor = ({
       if (!(target instanceof Node)) return;
       if (editorRootRef.current?.contains(target)) return;
       if (slashMenuRef.current?.contains(target)) return;
+      // Belt-and-braces fallback in case the ref above is somehow
+      // null at the moment of the click — match the portal by data
+      // attribute too.
+      if (
+        target instanceof Element &&
+        target.closest('[data-mini-slash-portal="1"]')
+      ) {
+        return;
+      }
       setSlashState(null);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -658,6 +685,15 @@ export const MiniEditor = ({
           <div
             className={styles.slashMenu}
             ref={slashMenuRef}
+            // Tag the portal root so the host calendar Modal can
+            // detect "click landed on the slash menu" inside its
+            // contentOptions.onPointerDownOutside handler. Without
+            // that handler, Radix Dialog sees clicks on this portal
+            // (which lives at document.body, outside Dialog.Content)
+            // as "outside the dialog" and tears the menu down before
+            // onPointerUp ever reaches the button. CalendarPanel
+            // wires the override.
+            data-mini-slash-portal="1"
             // Anchor coords are viewport-relative, so position: fixed
             // sidesteps any ancestor `overflow: hidden` clipping.
             style={{ top: slashState.anchor.top, left: slashState.anchor.left }}

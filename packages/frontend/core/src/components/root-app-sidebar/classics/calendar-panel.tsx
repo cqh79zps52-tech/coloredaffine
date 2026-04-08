@@ -314,6 +314,37 @@ export const CalendarPanel = ({
     setSelectedDay(null);
   }, []);
 
+  // The MiniEditor's slash command popup lives in a portal at
+  // document.body so its `position: fixed` coordinates remain
+  // viewport-relative — the Modal's content wrapper has a CSS
+  // transform that creates a containing block, and an inline
+  // `position: fixed` element inside that wrapper would render
+  // relative to it instead of the viewport.
+  //
+  // The downside of the portal is that Radix Dialog's
+  // dismissable-layer logic sees clicks on the slash menu as
+  // "outside the dialog content" and tries to close the modal,
+  // which tears the slash menu down before onPointerUp reaches the
+  // button — and the user just sees the menu disappear with
+  // nothing happening.
+  //
+  // We tag the portal root with `data-mini-slash-portal="1"` and
+  // detect that here. preventDefault tells Radix to leave the
+  // dialog open. We dig the original native event out of
+  // detail.originalEvent because Radix's outside-event target is
+  // the dialog content node, not the actual click target.
+  const handleSlashSafePointerDownOutside = useCallback((e: Event) => {
+    const native = (e as CustomEvent<{ originalEvent: PointerEvent }>).detail
+      ?.originalEvent;
+    const target = native?.target;
+    if (
+      target instanceof Element &&
+      target.closest('[data-mini-slash-portal="1"]')
+    ) {
+      e.preventDefault();
+    }
+  }, []);
+
   // Mobile detail view replaces the entire modal content.
   if (isMobile && selectedDay) {
     return (
@@ -330,6 +361,9 @@ export const CalendarPanel = ({
         // Same close-button offset as the picker view so the X is
         // not stuck under the iOS status bar.
         closeButtonOptions={{ className: styles.modalCloseButtonMobileOffset }}
+        contentOptions={{
+          onPointerDownOutside: handleSlashSafePointerDownOutside,
+        }}
       >
         <MobileDayDetail date={selectedDay} onBack={handleBackFromDetail} />
       </Modal>
@@ -354,6 +388,9 @@ export const CalendarPanel = ({
       // header is unaffected.
       headerClassName={styles.modalHeaderMobileOffset}
       closeButtonOptions={{ className: styles.modalCloseButtonMobileOffset }}
+      contentOptions={{
+        onPointerDownOutside: handleSlashSafePointerDownOutside,
+      }}
     >
       <div className={styles.calendarModalContent}>
         <div className={styles.calendarHeader}>
