@@ -588,6 +588,14 @@ export const MiniEditor = ({
   // with `data-mini-toolbar="1"`. We also clear on Escape so keyboard
   // users have an exit path.
   const editorRootRef = useRef<HTMLDivElement | null>(null);
+  // Ref to the (portaled) format toolbar root, populated by
+  // FormatToolbar via the rootRef prop. We need this so the
+  // click-outside listener can reliably detect "click landed inside
+  // the toolbar" without relying on data-attribute matching, which
+  // turned out to be flaky inside the calendar Modal.
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  // Same idea for the slash menu, which is also portaled.
+  const slashMenuRef = useRef<HTMLDivElement | null>(null);
 
   const handleFocus = useCallback((id: string) => {
     setFocusedBlockId(id);
@@ -597,10 +605,14 @@ export const MiniEditor = ({
     if (!focusedBlockId && !slashState) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
+      if (!(target instanceof Node)) return;
+      // The editor's own DOM tree.
       if (editorRootRef.current?.contains(target)) return;
-      if (target.closest('[data-mini-toolbar="1"]')) return;
-      if (target.closest('[data-mini-slash="1"]')) return;
+      // The portaled toolbar / slash menu DOM trees. contains() is a
+      // pure DOM query so it works regardless of which document
+      // location React mounted them at.
+      if (toolbarRef.current?.contains(target)) return;
+      if (slashMenuRef.current?.contains(target)) return;
       // Click landed completely outside the editor surface — dismiss
       // both auxiliary popups so we don't leave a stale toolbar
       // hovering over unrelated content.
@@ -678,12 +690,33 @@ export const MiniEditor = ({
         );
       })}
 
+      {/*
+        The toolbar HAS to be portaled to document.body so its
+        `position: fixed` coordinates remain viewport-relative — the
+        Modal that hosts the calendar uses CSS transform animations,
+        and an inline `position: fixed` element inside a transformed
+        ancestor becomes positioned relative to that ancestor instead
+        of the viewport. With the portal, the toolbar lives outside
+        every transformed parent so getBoundingClientRect() coords
+        from the textarea map directly to where the toolbar should
+        render.
+
+        The previous flaw was that the editor's click-outside
+        listener could not reliably detect clicks on the portaled
+        toolbar (data-attribute matching was flaky inside Radix
+        Dialog). We now pass a real DOM ref through to FormatToolbar,
+        store it on `toolbarRef`, and the click-outside listener
+        checks that ref directly via contains() — which works across
+        portals because contains() is a pure DOM-tree query and
+        doesn't care where in the DOM the element lives.
+      */}
       {focusedBlock && !slashState && typeof document !== 'undefined'
         ? createPortal(
             <FormatToolbar
               block={focusedBlock}
               anchorEl={inputsRef.current.get(focusedBlock.id) ?? null}
               onApply={applyMark}
+              rootRef={toolbarRef}
             />,
             document.body
           )
@@ -695,6 +728,7 @@ export const MiniEditor = ({
         createPortal(
           <div
             className={styles.slashMenu}
+            ref={slashMenuRef}
             // Anchor coords are viewport-relative, so position: fixed
             // sidesteps any ancestor `overflow: hidden` clipping.
             style={{ top: slashState.anchor.top, left: slashState.anchor.left }}
@@ -762,6 +796,7 @@ const FormatToolbar = ({
   block,
   anchorEl,
   onApply,
+  rootRef,
 }: {
   block: MiniBlock;
   anchorEl: HTMLTextAreaElement | null;
@@ -769,6 +804,7 @@ const FormatToolbar = ({
     key: K,
     value: MiniBlockMarks[K]
   ) => void;
+  rootRef: React.MutableRefObject<HTMLDivElement | null>;
 }) => {
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [highlightOpen, setHighlightOpen] = useState(false);
@@ -805,9 +841,15 @@ const FormatToolbar = ({
 
   // Tag every interactive element with `data-mini-toolbar="1"` so the
   // editor's blur-cleanup logic can recognise focus moving here and
-  // not tear the toolbar down mid-click.
+  // not tear the toolbar down mid-click. We also call
+  // stopPropagation in capture phase on the toolbar root so the
+  // editor's document-level pointerdown listener never even sees
+  // clicks that landed on the toolbar — combined with the inline
+  // (non-portal) rendering this gives us two independent reasons the
+  // toolbar can't accidentally dismiss itself.
   return (
     <div
+      ref={rootRef}
       data-mini-toolbar="1"
       className={styles.formatToolbar}
       style={{ top: pos.top, left: pos.left }}

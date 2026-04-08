@@ -250,23 +250,39 @@ export const deleteButton = style({
 // than a sidebar popover. The Modal wrapper provides the outer
 // width/height; this content fills 100% of that.
 //
-// Top padding uses env(safe-area-inset-top) so on iOS / notched
-// Android the month label + nav buttons sit *below* the status bar
-// instead of underneath the camera cutout. env() resolves to 0 on
-// desktop browsers so the desktop modal is unaffected. We always
-// pad bottom too so the grid never hugs the home-indicator.
+// Top padding: previously we used max(8px, env(safe-area-inset-top))
+// — but iOS Capacitor's WKWebView sits *below* the status bar by
+// default (AffineViewController has edgesForExtendedLayout = []), so
+// env(safe-area-inset-top) resolves to 0 inside the webview because
+// from the webview's perspective there's nothing to inset. The
+// content ended up flush with the modal top and the user reported
+// the day-detail header conflicted with the phone UI. Solution: on
+// the fullScreen variant (which only happens on mobile, since the
+// desktop modal is never fullScreen) push content down by a fixed
+// 48px and *also* honour env() in case a future iOS version or a
+// notched Android device returns a real value.
 export const calendarModalContent = style({
   display: 'flex',
   flexDirection: 'column',
   gap: 12,
   paddingLeft: 4,
   paddingRight: 4,
-  paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
-  paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
+  paddingTop: 8,
+  paddingBottom: 8,
   width: '100%',
   height: '100%',
   minHeight: 0,
   overflow: 'hidden',
+  selectors: {
+    // Modal sets data-full-screen on its wrapper. We can't query the
+    // wrapper directly from a child class, but the wrapper applies
+    // the attribute to itself and the selector cascades to descendants
+    // via the `&` ancestor combinator.
+    '[data-full-screen="true"] &': {
+      paddingTop: 'max(48px, env(safe-area-inset-top, 0px))',
+      paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))',
+    },
+  },
 });
 
 export const calendarHeader = style({
@@ -386,21 +402,23 @@ export const calendarDayDot = style({
 });
 
 // Mobile day-detail screen — fills the modal once the user taps a
-// cell. We use a column layout so the editor fills all remaining
-// vertical space while the header (day label + back button) stays
-// pinned at the top.
-//
-// The whole screen is shifted below the system status bar with a
-// safe-area top padding. Without this the back button on iPhone sits
-// underneath the camera notch and is unreachable.
+// cell. Same fixed mobile-only top padding story as the calendar
+// month grid above: env(safe-area-inset-top) is 0 inside Capacitor's
+// WKWebView because the webview is already below the status bar, so
+// we use a hardcoded 48px on the fullScreen variant and additionally
+// honour env() for any case where it actually has a value.
 export const calendarDayDetail = style({
   display: 'flex',
   flexDirection: 'column',
   width: '100%',
   height: '100%',
   minHeight: 0,
-  paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
-  paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
+  selectors: {
+    '[data-full-screen="true"] &': {
+      paddingTop: 'max(48px, env(safe-area-inset-top, 0px))',
+      paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))',
+    },
+  },
 });
 
 export const calendarDayDetailHeader = style({
@@ -711,9 +729,16 @@ globalStyle(`${addTodoRow} input`, {
 });
 
 // ── Format toolbar (mini-editor whole-block marks) ───────────
+// We use position: fixed so the toolbar visually escapes the day
+// cell's `overflow: hidden`. The z-index is intentionally absurdly
+// high — the Modal that hosts the calendar uses cssVar('zIndexModal')
+// for its backdrop and content stacking context, and we need to be
+// guaranteed-above it on every theme regardless of what value the
+// theme picks. 2_147_483_647 is the max signed 32-bit int and the
+// largest value all browsers honour for z-index.
 export const formatToolbar = style({
   position: 'fixed',
-  zIndex: 1100,
+  zIndex: 2147483647,
   display: 'flex',
   alignItems: 'center',
   gap: 2,
@@ -805,20 +830,27 @@ export const formatSwatch = style({
 });
 
 // ── Habits panel — refreshed ─────────────────────────────────
-// Same safe-area treatment as the calendar so the header doesn't
-// hide under the iOS notch when the modal goes fullScreen on mobile.
+// Same fixed mobile top-padding story as the calendar; env() is 0
+// inside Capacitor's webview so we hardcode 48px on the fullScreen
+// variant and additionally honour env() where it has a real value.
 export const habitsModalContent = style({
   display: 'flex',
   flexDirection: 'column',
   gap: 20,
   paddingLeft: 8,
   paddingRight: 8,
-  paddingTop: 'max(4px, env(safe-area-inset-top, 0px))',
-  paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
+  paddingTop: 4,
+  paddingBottom: 8,
   width: '100%',
   height: '100%',
   minHeight: 0,
   overflow: 'hidden',
+  selectors: {
+    '[data-full-screen="true"] &': {
+      paddingTop: 'max(48px, env(safe-area-inset-top, 0px))',
+      paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))',
+    },
+  },
 });
 
 export const habitsAddCard = style({
