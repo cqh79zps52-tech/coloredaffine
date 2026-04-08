@@ -64,9 +64,14 @@ function emptyParagraph(): MiniBlock {
 }
 
 /**
- * One slash-command entry. `apply` returns the new shape for the block
- * being transformed; the editor preserves the block id so React keeps
- * the same DOM input and the caret can be re-focused after the swap.
+ * One slash-command entry. Commands come in two shapes:
+ *
+ *   - Transform commands set `apply` and replace the *current* block
+ *     with a new shape, preserving the block id so the textarea
+ *     stays mounted and the caret can be re-focused.
+ *   - Whole-day commands set `clearAll: true` and operate on the
+ *     entire block list (currently only `/clear-case-content`, which
+ *     wipes every block in the day cell).
  */
 interface SlashCommand {
   id: string;
@@ -74,7 +79,9 @@ interface SlashCommand {
   desc: string;
   /** Substrings that should also match this command from the query. */
   keywords: string[];
-  apply: () => { type: MiniBlockType; text: string; done?: boolean };
+  apply?: () => { type: MiniBlockType; text: string; done?: boolean };
+  /** When true, applyCommand wipes every block in the day cell. */
+  clearAll?: boolean;
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
@@ -105,6 +112,13 @@ const SLASH_COMMANDS: SlashCommand[] = [
     desc: 'Big title for the day',
     keywords: ['title', 'header', 'h1'],
     apply: () => ({ type: 'h1', text: '' }),
+  },
+  {
+    id: 'clear-case-content',
+    label: 'Clear day',
+    desc: 'Erase everything written in this day cell',
+    keywords: ['clear', 'wipe', 'reset', 'erase', 'delete', 'empty'],
+    clearAll: true,
   },
 ];
 
@@ -328,12 +342,30 @@ export const MiniEditor = ({
   const applyCommand = useCallback(
     (cmd: SlashCommand) => {
       if (!slashState) return;
+
+      // Whole-day "clear" branch — wipes every block in the cell.
+      // We emit an empty array; the storage layer treats that as
+      // "no content" and the editor's blocks memo falls back to a
+      // single empty paragraph so the textarea stays mountable.
+      if (cmd.clearAll) {
+        pendingFocusRef.current = { id: fallbackBlock.id, pos: 0 };
+        setSlashState(null);
+        emit([]);
+        return;
+      }
+
       const idx = blocks.findIndex(b => b.id === slashState.blockId);
       if (idx === -1) {
         setSlashState(null);
         return;
       }
       const block = blocks[idx];
+      if (!cmd.apply) {
+        // Non-transform command without a clearAll handler — nothing
+        // to do, just close the menu.
+        setSlashState(null);
+        return;
+      }
       const shape = cmd.apply();
       const next = blocks.slice();
       next[idx] = {
@@ -346,7 +378,7 @@ export const MiniEditor = ({
       setSlashState(null);
       emit(next);
     },
-    [blocks, slashState, emit]
+    [blocks, slashState, emit, fallbackBlock]
   );
 
   const handleKeyDown = useCallback(
@@ -500,6 +532,51 @@ export const MiniEditor = ({
     [blocks, emit]
   );
 
+  /**
+   * Recompute slash menu state from a textarea's current text + caret
+   * position. Used by onSelect on every textarea so the menu opens
+   * not just when the user *types* `/` but also when they click /
+   * arrow-key into a block whose text already starts with `/`. We
+   * keep the rule simple: the menu shows iff the block's text
+   * starts with `/` and the caret has moved past that first
+   * character. The query is everything after the leading slash.
+   */
+  const syncSlashFromCaret = useCallback(
+    (block: MiniBlock, input: HTMLTextAreaElement, currentText: string) => {
+      const caret = input.selectionStart ?? 0;
+      const opensSlash = currentText.startsWith('/') && caret >= 1;
+      if (opensSlash) {
+        const nextQuery = currentText.slice(1);
+        // Only setState when something actually changed, otherwise
+        // we re-create slashState on every selectionchange and
+        // thrash the dismiss-listener useEffect.
+        if (
+          !slashState ||
+          slashState.blockId !== block.id ||
+          slashState.query !== nextQuery
+        ) {
+          setSlashState({
+            blockId: block.id,
+            query: nextQuery,
+            anchor: computeAnchor(block.id),
+          });
+        }
+      } else if (slashState && slashState.blockId === block.id) {
+        setSlashState(null);
+      }
+    },
+    [slashState, computeAnchor]
+  );
+
+  const handleSelect = useCallback(
+    (idx: number, e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+      const block = blocks[idx];
+      const input = e.currentTarget;
+      syncSlashFromCaret(block, input, input.value);
+    },
+    [blocks, syncSlashFromCaret]
+  );
+
   // Slash menu dismiss: a document-level pointerdown listener that
   // closes the menu when the click lands outside the editor root or
   // the menu itself. Both refs are real DOM nodes — Node.contains()
@@ -564,6 +641,7 @@ export const MiniEditor = ({
               placeholder={showPlaceholder ? placeholder : undefined}
               onChange={e => handleTextChange(i, e.target.value)}
               onKeyDown={e => handleKeyDown(i, e)}
+              onSelect={e => handleSelect(i, e)}
               spellCheck={false}
               autoComplete="off"
               rows={1}
@@ -596,33 +674,36 @@ export const MiniEditor = ({
                   styles.slashItem,
                   i === slashIndex && styles.slashItemActive
                 )}
-                // History of this handler:
+                // History of this handler — read this before changing
+                // anything:
                 //
-                // 1. We started with applyCommand directly inside
-                //    onMouseDown. That synchronously set slashState
-                //    to null and tore the portal down between
-                //    mousedown and click, so onClick never ran.
-                // 2. Split into onMouseDown→preventDefault (keep
-                //    textarea focus) + onPointerDown→preventDefault
-                //    (same idea) + onClick→applyCommand.
-                // 3. That worked on desktop but broke touch: calling
-                //    preventDefault on pointerdown can prevent the
-                //    browser from synthesising a click event on
-                //    touch end, so the user's tap landed nowhere.
+                // 1. Started with applyCommand inside onMouseDown.
+                //    Synchronously cleared slashState and tore the
+                //    portal down between mousedown and click, so
+                //    onClick never ran on desktop.
+                // 2. Split into onMouseDown→preventDefault +
+                //    onPointerDown→preventDefault + onClick. That
+                //    worked on desktop but the pointerdown
+                //    preventDefault suppressed the synthesised click
+                //    on touch, so taps did nothing on mobile.
+                // 3. Dropped the pointerdown preventDefault — desktop
+                //    still worked, but the user reported click is
+                //    STILL not firing on the deployed mobile build.
+                //    Either iOS Safari WKWebView isn't synthesising
+                //    click reliably here, or some Radix Dialog event
+                //    handler in the host modal is eating it.
                 //
-                // The current shape:
-                //   - onMouseDown: preventDefault to keep the host
-                //     textarea focused on desktop. Mouse-only —
-                //     mousedown isn't reliably fired on touch.
-                //   - NO onPointerDown handler — touch needs the
-                //     default to run so click gets synthesised.
-                //   - onClick: the actual confirm action. By the
-                //     time click fires the menu is still mounted,
-                //     so applyCommand can update state cleanly.
-                //     click is synthesised on touch end without us
-                //     touching pointerdown.
+                // Current shape: handle in onPointerUp instead of
+                // onClick. pointerup fires on both mouse and touch
+                // *before* the click synthesis path, so it works
+                // even if click never gets dispatched. We still call
+                // preventDefault on mousedown to stop the textarea
+                // from blurring on desktop (touch doesn't reliably
+                // fire mousedown so this is mouse-only). pointerup
+                // does NOT need preventDefault — its default has no
+                // effect on focus.
                 onMouseDown={e => e.preventDefault()}
-                onClick={e => {
+                onPointerUp={e => {
                   e.preventDefault();
                   applyCommand(cmd);
                 }}

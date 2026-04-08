@@ -204,5 +204,17 @@ export function useHabits() {
     [yMap]
   );
 
-  return { habits, addHabit, toggleHabit, removeHabit };
+  const renameHabit = useCallback(
+    (id: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const h = yMap.get(id);
+      if (!h) return;
+      if (h.name === trimmed) return;
+      yMap.set(id, { ...h, name: trimmed });
+    },
+    [yMap]
+  );
+
+  return { habits, addHabit, toggleHabit, removeHabit, renameHabit };
 }

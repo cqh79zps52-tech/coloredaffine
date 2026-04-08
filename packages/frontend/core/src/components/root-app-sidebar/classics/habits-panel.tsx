@@ -1,11 +1,89 @@
 import { Modal } from '@affine/component';
 import { FirePanelIcon, ResetIcon } from '@blocksuite/icons/rc';
 import clsx from 'clsx';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as styles from './styles.css';
-import type { ResetInterval } from './types';
+import type { Habit, ResetInterval } from './types';
 import { getDaysSinceCreation, getStreak, useHabits } from './use-habits';
+
+/**
+ * Inline-editable habit name. Click the name to switch into an
+ * input; Enter or blur commits, Escape cancels. Stays read-only by
+ * default so the row hover/click target for marking-as-done isn't
+ * disturbed.
+ */
+const HabitName = ({
+  habit,
+  onRename,
+}: {
+  habit: Habit;
+  onRename: (id: string, name: string) => void;
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(habit.name);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // When the habit's name changes externally (e.g. another tab) and
+  // we're not currently editing, sync the draft so reopening the
+  // editor starts from the latest value.
+  useEffect(() => {
+    if (!editing) setDraft(habit.name);
+  }, [habit.name, editing]);
+
+  // Auto-focus + select the text when we enter edit mode.
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  const commit = useCallback(() => {
+    onRename(habit.id, draft);
+    setEditing(false);
+  }, [draft, habit.id, onRename]);
+
+  const cancel = useCallback(() => {
+    setDraft(habit.name);
+    setEditing(false);
+  }, [habit.name]);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        className={styles.habitCardNameInput}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        // Stop the click from bubbling so it doesn't toggle the
+        // habit's checkbox row.
+        onClick={e => e.stopPropagation()}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={styles.habitCardName}
+      onClick={() => setEditing(true)}
+      title="Click to rename"
+    >
+      {habit.name}
+    </button>
+  );
+};
 
 function resetLabel(r: ResetInterval): string {
   switch (r.type) {
@@ -25,7 +103,8 @@ export const HabitsPanel = ({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) => {
-  const { habits, addHabit, toggleHabit, removeHabit } = useHabits();
+  const { habits, addHabit, toggleHabit, removeHabit, renameHabit } =
+    useHabits();
 
   const [name, setName] = useState('');
   const [resetType, setResetType] = useState<'daily' | 'hours' | 'days'>(
@@ -147,7 +226,7 @@ export const HabitsPanel = ({
                     aria-label={`Mark ${habit.name} done`}
                   />
                   <div className={styles.habitCardBody}>
-                    <div className={styles.habitCardName}>{habit.name}</div>
+                    <HabitName habit={habit} onRename={renameHabit} />
                     <div className={styles.habitCardMeta}>
                       <span className={styles.habitCardStreak}>
                         <FirePanelIcon style={{ width: 14, height: 14 }} />

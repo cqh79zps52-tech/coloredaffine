@@ -946,12 +946,42 @@ export const habitCardBody = style({
 });
 
 export const habitCardName = style({
+  // Used as a <button> in read mode so the user can click the name
+  // to enter inline edit. We strip every browser-default button
+  // affordance so it visually matches the previous static row.
+  display: 'block',
+  width: '100%',
+  padding: 0,
+  margin: 0,
+  border: 'none',
+  background: 'transparent',
+  textAlign: 'left',
+  cursor: 'text',
+  fontFamily: 'inherit',
   fontSize: 17,
   fontWeight: 600,
   color: cssVarV2.text.primary,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
+  ':hover': {
+    color: cssVarV2.button.primary,
+  },
+});
+
+export const habitCardNameInput = style({
+  display: 'block',
+  width: '100%',
+  padding: '4px 8px',
+  margin: 0,
+  border: `1px solid ${cssVarV2.button.primary}`,
+  borderRadius: 6,
+  background: cssVarV2.layer.background.primary,
+  color: cssVarV2.text.primary,
+  fontFamily: 'inherit',
+  fontSize: 17,
+  fontWeight: 600,
+  outline: 'none',
 });
 
 export const habitCardMeta = style({
