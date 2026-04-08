@@ -111,10 +111,14 @@ const DetailPageImpl = () => {
     };
   }, [doc, globalContext, mode]);
 
+  // The floating AI button is intentionally disabled in this fork —
+  // we never call presentAIButton(true) so the right-corner overlay
+  // never mounts on the mobile detail page. The service + feature flag
+  // are still wired up so it can be re-enabled later by reverting this
+  // hunk; we just no-op the effect rather than ripping out the whole
+  // import surface.
   useEffect(() => {
-    if (!enableAIButton) return;
-    aIButtonService.presentAIButton(true);
-
+    aIButtonService.presentAIButton(false);
     return () => {
       aIButtonService.presentAIButton(false);
     };

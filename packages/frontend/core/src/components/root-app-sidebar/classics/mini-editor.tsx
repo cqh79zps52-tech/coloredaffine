@@ -53,7 +53,30 @@ import {
 import { createPortal } from 'react-dom';
 
 import * as styles from './styles.css';
-import type { MiniBlock, MiniBlockType } from './types';
+import type { MiniBlock, MiniBlockMarks, MiniBlockType } from './types';
+
+/**
+ * Whole-block format toolbar palette. We deliberately keep the lists
+ * short — the calendar day cells are tiny and a sprawling Notion-style
+ * colour grid would be unusable. The first option in each list is the
+ * "no value" option that clears the mark.
+ */
+const HIGHLIGHT_SWATCHES: Array<{ value: string | null; label: string }> = [
+  { value: null, label: 'None' },
+  { value: '#fff3a0', label: 'Yellow' },
+  { value: '#ffd0d0', label: 'Pink' },
+  { value: '#d0ecff', label: 'Blue' },
+  { value: '#d6f5d0', label: 'Green' },
+  { value: '#e6d6ff', label: 'Purple' },
+];
+const COLOR_SWATCHES: Array<{ value: string | null; label: string }> = [
+  { value: null, label: 'Default' },
+  { value: '#d93025', label: 'Red' },
+  { value: '#e8710a', label: 'Orange' },
+  { value: '#188038', label: 'Green' },
+  { value: '#1967d2', label: 'Blue' },
+  { value: '#9334e6', label: 'Purple' },
+];
 
 function uid(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -162,6 +185,15 @@ export const MiniEditor = ({
   // Slash command popup state. `null` means the menu is closed.
   const [slashState, setSlashState] = useState<SlashState | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+
+  // Which block currently has the caret. Used by the formatting
+  // toolbar so it knows which block to apply marks to. We track this
+  // alongside (rather than reading from document.activeElement) so the
+  // toolbar can stay open while the user clicks one of its buttons —
+  // the textarea blurs momentarily, but the toolbar's mousedown
+  // handler keeps `focusedBlockId` set so the action lands on the
+  // right block.
+  const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
 
   const filteredCommands = useMemo(() => {
     if (!slashState) return [];
@@ -500,21 +532,63 @@ export const MiniEditor = ({
     [blocks, emit]
   );
 
+  /**
+   * Apply (or clear) a whole-block formatting mark on the currently
+   * focused block. Used by the floating formatting toolbar.
+   */
+  const applyMark = useCallback(
+    <K extends keyof MiniBlockMarks>(key: K, value: MiniBlockMarks[K]) => {
+      if (!focusedBlockId) return;
+      const idx = blocks.findIndex(b => b.id === focusedBlockId);
+      if (idx === -1) return;
+      const block = blocks[idx];
+      const nextMarks: MiniBlockMarks = { ...block.marks };
+      if (value === undefined || value === null || value === false) {
+        delete nextMarks[key];
+      } else {
+        nextMarks[key] = value;
+      }
+      const next = blocks.slice();
+      next[idx] = {
+        ...block,
+        marks: Object.keys(nextMarks).length > 0 ? nextMarks : undefined,
+      };
+      // Re-focus the block we just formatted — the toolbar buttons
+      // briefly steal focus when clicked, and we want the caret back.
+      pendingFocusRef.current = { id: block.id, pos: 0 };
+      emit(next);
+    },
+    [blocks, focusedBlockId, emit]
+  );
+
+  const focusedBlock = useMemo(
+    () => blocks.find(b => b.id === focusedBlockId) ?? null,
+    [blocks, focusedBlockId]
+  );
+
   // Close the slash menu when the input loses focus to anything other
   // than the menu itself. We do that with a microtask delay so a click
   // on a menu item still has time to register.
+  //
+  // The same delay is used to clear `focusedBlockId` so the formatting
+  // toolbar (which lives outside the textarea) can keep itself open
+  // while the user clicks one of its buttons. The toolbar marks its
+  // root element with `data-mini-toolbar="1"`; if focus moves there we
+  // leave the focus state alone.
   const handleBlur = useCallback(() => {
     setTimeout(() => {
       const active = document.activeElement;
-      if (
-        active &&
-        active instanceof HTMLElement &&
-        active.dataset.miniSlash === '1'
-      ) {
-        return;
+      if (active && active instanceof HTMLElement) {
+        if (active.dataset.miniSlash === '1') return;
+        if (active.closest('[data-mini-toolbar="1"]')) return;
       }
       setSlashState(null);
+      setFocusedBlockId(null);
     }, 0);
+  }, []);
+
+  const handleFocus = useCallback((id: string) => {
+    setFocusedBlockId(id);
   }, []);
 
   return (
@@ -549,10 +623,22 @@ export const MiniEditor = ({
                 b.type === 'h1' && styles.miniInputH1,
                 b.type === 'todo' && b.done && styles.miniInputDone
               )}
+              // Whole-block marks are applied via inline style so they
+              // don't blow up the static CSS surface. The textarea is
+              // a single editable surface so we can't host inline
+              // spans without rewriting the editor on contentEditable;
+              // whole-block colour / highlight / underline cover the
+              // calendar use cases.
+              style={{
+                color: b.marks?.color,
+                backgroundColor: b.marks?.highlight,
+                textDecoration: b.marks?.underline ? 'underline' : undefined,
+              }}
               value={b.text}
               placeholder={showPlaceholder ? placeholder : undefined}
               onChange={e => handleTextChange(i, e.target.value)}
               onKeyDown={e => handleKeyDown(i, e)}
+              onFocus={() => handleFocus(b.id)}
               onBlur={handleBlur}
               spellCheck={false}
               autoComplete="off"
@@ -562,6 +648,17 @@ export const MiniEditor = ({
           </div>
         );
       })}
+
+      {focusedBlock && !slashState && typeof document !== 'undefined'
+        ? createPortal(
+            <FormatToolbar
+              block={focusedBlock}
+              anchorEl={inputsRef.current.get(focusedBlock.id) ?? null}
+              onApply={applyMark}
+            />,
+            document.body
+          )
+        : null}
 
       {slashState &&
         filteredCommands.length > 0 &&
@@ -585,10 +682,30 @@ export const MiniEditor = ({
                   styles.slashItem,
                   i === slashIndex && styles.slashItemActive
                 )}
-                // mousedown + preventDefault so the host input keeps
-                // focus and the browser doesn't fire a blur that closes
-                // the menu before the click resolves.
-                onMouseDown={e => {
+                // The previous version called `applyCommand` directly
+                // from `onMouseDown`. That synchronously set
+                // `slashState` to null and emitted new blocks, so by
+                // the time React finished the event React had already
+                // unmounted the portal — the corresponding mouseup /
+                // click / touchend then fired on a button that no
+                // longer existed and the user just saw "nothing
+                // happened". On mobile this was even worse because
+                // tap → click can fire without an intermediate
+                // mousedown at all.
+                //
+                // Split the responsibilities:
+                //   - `onMouseDown` / `onPointerDown` only call
+                //     `preventDefault()` so the host textarea keeps
+                //     focus (otherwise blur → handleBlur() closes the
+                //     menu before the click resolves).
+                //   - `onClick` is the actual confirm action. By the
+                //     time `click` fires the menu is still mounted, so
+                //     the React handler runs cleanly. `click` is
+                //     synthesised on touch end too, so this also
+                //     covers finger taps on mobile.
+                onMouseDown={e => e.preventDefault()}
+                onPointerDown={e => e.preventDefault()}
+                onClick={e => {
                   e.preventDefault();
                   applyCommand(cmd);
                 }}
@@ -601,6 +718,183 @@ export const MiniEditor = ({
           </div>,
           document.body
         )}
+    </div>
+  );
+};
+
+/**
+ * Floating whole-block formatting toolbar. Anchored just above the
+ * focused textarea (or below if there's no room above) using viewport
+ * coordinates, so it works inside scroll containers and modals
+ * without escaping clipped parents. The toolbar is mounted in a
+ * portal to document.body for the same reason.
+ */
+const FormatToolbar = ({
+  block,
+  anchorEl,
+  onApply,
+}: {
+  block: MiniBlock;
+  anchorEl: HTMLTextAreaElement | null;
+  onApply: <K extends keyof MiniBlockMarks>(
+    key: K,
+    value: MiniBlockMarks[K]
+  ) => void;
+}) => {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [highlightOpen, setHighlightOpen] = useState(false);
+  const [colorOpen, setColorOpen] = useState(false);
+
+  // Recompute the toolbar position whenever the focused block changes
+  // or its rect moves (window resize / scroll). We piggy-back on the
+  // browser's resize/scroll events because the only thing that moves
+  // the textarea is layout.
+  useLayoutEffect(() => {
+    if (!anchorEl) {
+      setPos(null);
+      return;
+    }
+    const compute = () => {
+      const r = anchorEl.getBoundingClientRect();
+      const TOOLBAR_HEIGHT = 36;
+      const margin = 6;
+      let top = r.top - TOOLBAR_HEIGHT - margin;
+      // Flip below if it would clip the viewport top.
+      if (top < 8) top = r.bottom + margin;
+      setPos({ top, left: r.left });
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    window.addEventListener('scroll', compute, true);
+    return () => {
+      window.removeEventListener('resize', compute);
+      window.removeEventListener('scroll', compute, true);
+    };
+  }, [anchorEl, block.id]);
+
+  if (!pos) return null;
+
+  // Tag every interactive element with `data-mini-toolbar="1"` so the
+  // editor's blur-cleanup logic can recognise focus moving here and
+  // not tear the toolbar down mid-click.
+  return (
+    <div
+      data-mini-toolbar="1"
+      className={styles.formatToolbar}
+      style={{ top: pos.top, left: pos.left }}
+      // Don't let mousedown bubble out and steal focus from the
+      // textarea before the click handler runs.
+      onMouseDown={e => e.preventDefault()}
+    >
+      <button
+        type="button"
+        data-mini-toolbar="1"
+        className={clsx(
+          styles.formatButton,
+          block.marks?.underline && styles.formatButtonActive
+        )}
+        onMouseDown={e => e.preventDefault()}
+        onClick={() => onApply('underline', !block.marks?.underline)}
+        title="Underline"
+      >
+        <span style={{ textDecoration: 'underline' }}>U</span>
+      </button>
+
+      <div className={styles.formatToolbarSep} />
+
+      <button
+        type="button"
+        data-mini-toolbar="1"
+        className={clsx(
+          styles.formatButton,
+          block.marks?.highlight && styles.formatButtonActive
+        )}
+        onMouseDown={e => e.preventDefault()}
+        onClick={() => {
+          setHighlightOpen(o => !o);
+          setColorOpen(false);
+        }}
+        title="Highlight"
+      >
+        <span
+          className={styles.formatSwatchPreview}
+          style={{ background: block.marks?.highlight ?? 'transparent' }}
+        />
+        <span>H</span>
+      </button>
+      {highlightOpen && (
+        <div className={styles.formatPalette} data-mini-toolbar="1">
+          {HIGHLIGHT_SWATCHES.map(s => (
+            <button
+              key={s.label}
+              type="button"
+              data-mini-toolbar="1"
+              className={styles.formatSwatchButton}
+              title={s.label}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                onApply('highlight', s.value ?? undefined);
+                setHighlightOpen(false);
+              }}
+            >
+              <span
+                className={styles.formatSwatch}
+                style={{
+                  background: s.value ?? 'transparent',
+                  border: s.value ? undefined : '1px dashed currentColor',
+                }}
+              />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        data-mini-toolbar="1"
+        className={clsx(
+          styles.formatButton,
+          block.marks?.color && styles.formatButtonActive
+        )}
+        onMouseDown={e => e.preventDefault()}
+        onClick={() => {
+          setColorOpen(o => !o);
+          setHighlightOpen(false);
+        }}
+        title="Text colour"
+      >
+        <span
+          style={{ color: block.marks?.color ?? undefined, fontWeight: 700 }}
+        >
+          A
+        </span>
+      </button>
+      {colorOpen && (
+        <div className={styles.formatPalette} data-mini-toolbar="1">
+          {COLOR_SWATCHES.map(s => (
+            <button
+              key={s.label}
+              type="button"
+              data-mini-toolbar="1"
+              className={styles.formatSwatchButton}
+              title={s.label}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                onApply('color', s.value ?? undefined);
+                setColorOpen(false);
+              }}
+            >
+              <span
+                className={styles.formatSwatch}
+                style={{
+                  background: s.value ?? 'transparent',
+                  border: s.value ? undefined : '1px dashed currentColor',
+                }}
+              />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

@@ -2,10 +2,7 @@ import { SafeArea, useThemeColorV2 } from '@affine/component';
 
 import { AppTabs } from '../../components';
 import {
-  NavigationPanelCollections,
-  NavigationPanelFavorites,
   NavigationPanelOrganize,
-  NavigationPanelTags,
   NavigationPanelUtils,
 } from '../../components/navigation';
 import { HomeHeader, RecentDocs } from '../../views';
@@ -26,10 +23,7 @@ export const Component = () => {
             padding: '0 8px 32px 8px',
           }}
         >
-          <NavigationPanelFavorites />
           <NavigationPanelOrganize />
-          <NavigationPanelCollections />
-          <NavigationPanelTags />
           <NavigationPanelUtils />
         </div>
       </SafeArea>

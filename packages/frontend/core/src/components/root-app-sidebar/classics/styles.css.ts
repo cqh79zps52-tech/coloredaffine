@@ -315,14 +315,118 @@ export const calendarTodayButton = style({
 export const calendarGrid = style({
   display: 'grid',
   gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-  gridAutoRows: 'minmax(220px, 1fr)',
+  // Drop the 220px minimum so 6 rows always fit inside the modal
+  // viewport instead of overflowing the bottom. Each cell still owns
+  // a scrollable mini editor that uses overflow:auto for content
+  // taller than the cell.
+  gridAutoRows: 'minmax(110px, 1fr)',
   gap: 6,
   flex: 1,
   minHeight: 0,
-  // Each day hosts a real mini editor, so cells need real estate. If
-  // the viewport can't fit every row at the requested minimum height
-  // we'd rather scroll the grid than crush each editor unusably small.
+  // Defensive: if the viewport is *really* short (e.g. landscape
+  // phone) the rows will still be smaller than 110px because we
+  // hard-cap with `1fr`, but in case 6 × the row min ever exceeds
+  // available height we let the grid scroll instead of pushing the
+  // bottom past the modal.
   overflowY: 'auto',
+});
+
+// Mobile-only: a compact picker grid (just day numbers + a content
+// dot) that fits a phone screen. Each cell becomes a tap target
+// rather than a host for an inline editor; tapping opens the day
+// detail screen instead.
+export const calendarGridCompact = style({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+  gridAutoRows: 'minmax(56px, auto)',
+  gap: 4,
+  flex: 'none',
+});
+
+export const calendarDayCellCompact = style({
+  position: 'relative',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  borderRadius: 8,
+  backgroundColor: cssVarV2.layer.background.primary,
+  padding: '8px 4px',
+  fontSize: 16,
+  fontWeight: 500,
+  color: cssVarV2.text.primary,
+  cursor: 'pointer',
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  outline: 'none',
+  // Bigger touch target without growing the visible cell.
+  minHeight: 56,
+  ':active': {
+    backgroundColor: cssVarV2.layer.background.hoverOverlay,
+  },
+});
+
+export const calendarDayDot = style({
+  display: 'block',
+  width: 6,
+  height: 6,
+  marginTop: 4,
+  borderRadius: '50%',
+  backgroundColor: cssVarV2.button.primary,
+});
+
+// Mobile day-detail screen — fills the modal once the user taps a
+// cell. We use a column layout so the editor fills all remaining
+// vertical space while the header (day label + back button) stays
+// pinned at the top.
+export const calendarDayDetail = style({
+  display: 'flex',
+  flexDirection: 'column',
+  width: '100%',
+  height: '100%',
+  minHeight: 0,
+});
+
+export const calendarDayDetailHeader = style({
+  display: 'flex',
+  alignItems: 'center',
+  gap: 12,
+  padding: '8px 4px 12px 4px',
+  borderBottom: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+});
+
+export const calendarDayDetailBack = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 36,
+  height: 36,
+  border: 'none',
+  background: 'none',
+  borderRadius: 8,
+  fontSize: 22,
+  cursor: 'pointer',
+  color: cssVarV2.text.primary,
+  ':active': {
+    backgroundColor: cssVarV2.layer.background.hoverOverlay,
+  },
+});
+
+export const calendarDayDetailTitle = style({
+  flex: 1,
+  fontSize: 18,
+  fontWeight: 700,
+  color: cssVarV2.text.primary,
+});
+
+export const calendarDayDetailBody = style({
+  flex: 1,
+  minHeight: 0,
+  overflow: 'auto',
+  padding: '12px 4px',
+  // Bigger font in the detail view so editing on mobile is comfortable.
+  fontSize: 16,
 });
 
 export const calendarDayNamesRow = style({
@@ -589,4 +693,340 @@ export const addTodoRow = style({
 
 globalStyle(`${addTodoRow} input`, {
   flex: 1,
+});
+
+// ── Format toolbar (mini-editor whole-block marks) ───────────
+export const formatToolbar = style({
+  position: 'fixed',
+  zIndex: 1100,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 2,
+  padding: 4,
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18)',
+  // Don't grow when palettes pop out — palettes are themselves
+  // absolutely positioned children.
+  height: 36,
+});
+
+export const formatToolbarSep = style({
+  width: 1,
+  height: 18,
+  backgroundColor: cssVarV2.layer.insideBorder.border,
+  margin: '0 2px',
+});
+
+export const formatButton = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 4,
+  minWidth: 28,
+  height: 28,
+  padding: '0 8px',
+  border: 'none',
+  borderRadius: 5,
+  background: 'transparent',
+  color: cssVarV2.text.primary,
+  fontSize: 13,
+  fontWeight: 500,
+  cursor: 'pointer',
+  ':hover': {
+    backgroundColor: cssVarV2.layer.background.hoverOverlay,
+  },
+});
+
+export const formatButtonActive = style({
+  backgroundColor: cssVarV2.layer.background.hoverOverlay,
+});
+
+export const formatSwatchPreview = style({
+  display: 'inline-block',
+  width: 10,
+  height: 10,
+  borderRadius: 2,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+});
+
+export const formatPalette = style({
+  position: 'absolute',
+  top: '100%',
+  left: 0,
+  marginTop: 4,
+  display: 'flex',
+  gap: 4,
+  padding: 6,
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18)',
+});
+
+export const formatSwatchButton = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 26,
+  height: 26,
+  border: 'none',
+  borderRadius: 5,
+  background: 'transparent',
+  cursor: 'pointer',
+  padding: 0,
+  ':hover': {
+    backgroundColor: cssVarV2.layer.background.hoverOverlay,
+  },
+});
+
+export const formatSwatch = style({
+  display: 'inline-block',
+  width: 18,
+  height: 18,
+  borderRadius: 4,
+  boxSizing: 'border-box',
+});
+
+// ── Habits panel — refreshed ─────────────────────────────────
+export const habitsModalContent = style({
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 20,
+  padding: '4px 8px 8px 8px',
+  width: '100%',
+  height: '100%',
+  minHeight: 0,
+  overflow: 'hidden',
+});
+
+export const habitsAddCard = style({
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  padding: 16,
+  borderRadius: 12,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.secondary,
+});
+
+export const habitsAddCardTitle = style({
+  fontSize: 13,
+  fontWeight: 600,
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  color: cssVarV2.text.tertiary,
+});
+
+export const habitsAddCardRow = style({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 10,
+  alignItems: 'center',
+});
+
+export const habitsAddCardInput = style({
+  flex: '1 1 200px',
+  height: 40,
+  padding: '0 12px',
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  color: cssVarV2.text.primary,
+  fontSize: 15,
+  outline: 'none',
+  ':focus': {
+    borderColor: cssVarV2.button.primary,
+  },
+});
+
+export const habitsAddCardSelect = style({
+  height: 40,
+  padding: '0 12px',
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  color: cssVarV2.text.primary,
+  fontSize: 14,
+  outline: 'none',
+  cursor: 'pointer',
+});
+
+export const habitsAddCardNumber = style({
+  width: 80,
+  height: 40,
+  padding: '0 10px',
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  color: cssVarV2.text.primary,
+  fontSize: 15,
+  outline: 'none',
+  textAlign: 'center',
+});
+
+export const habitsAddCardButton = style({
+  height: 40,
+  padding: '0 22px',
+  borderRadius: 8,
+  border: 'none',
+  backgroundColor: cssVarV2.button.primary,
+  color: '#fff',
+  fontSize: 15,
+  fontWeight: 600,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  ':hover': {
+    opacity: 0.92,
+  },
+  ':disabled': {
+    opacity: 0.5,
+    cursor: 'not-allowed',
+  },
+});
+
+export const habitsList = style({
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 10,
+  padding: '4px 0 8px 0',
+});
+
+export const habitsEmpty = style({
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  padding: '48px 16px',
+  color: cssVarV2.text.secondary,
+  fontSize: 15,
+  textAlign: 'center',
+});
+
+export const habitsEmptyEmoji = style({
+  fontSize: 32,
+  marginBottom: 4,
+});
+
+export const habitCard = style({
+  display: 'grid',
+  gridTemplateColumns: 'auto 1fr auto',
+  alignItems: 'center',
+  gap: 14,
+  padding: 14,
+  borderRadius: 12,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  transition: 'border-color 0.15s, transform 0.05s',
+  ':hover': {
+    borderColor: cssVarV2.button.primary,
+  },
+});
+
+export const habitCardChecked = style({
+  backgroundColor: cssVarV2.layer.background.secondary,
+});
+
+export const habitCardCheckbox = style({
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  margin: 0,
+  width: 28,
+  height: 28,
+  minWidth: 28,
+  cursor: 'pointer',
+  border: `2px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  borderRadius: 8,
+  transition: 'background-color 0.15s, border-color 0.15s',
+  ':hover': {
+    borderColor: cssVarV2.button.primary,
+  },
+});
+
+globalStyle(`${habitCardCheckbox}:checked`, {
+  backgroundColor: cssVarV2.button.primary,
+  borderColor: cssVarV2.button.primary,
+  backgroundImage:
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5l3 3 6-6' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+  backgroundSize: '80% 80%',
+  backgroundPosition: 'center',
+  backgroundRepeat: 'no-repeat',
+});
+
+export const habitCardBody = style({
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  minWidth: 0,
+});
+
+export const habitCardName = style({
+  fontSize: 17,
+  fontWeight: 600,
+  color: cssVarV2.text.primary,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+});
+
+export const habitCardMeta = style({
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 10,
+  fontSize: 13,
+  color: cssVarV2.text.secondary,
+});
+
+export const habitCardStreak = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '4px 10px',
+  borderRadius: 999,
+  backgroundColor: '#fff3a0',
+  color: '#7a5d00',
+  fontSize: 13,
+  fontWeight: 700,
+});
+
+export const habitCardCounter = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontSize: 13,
+  color: cssVarV2.text.secondary,
+});
+
+export const habitCardReset = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontSize: 12,
+  color: cssVarV2.text.tertiary,
+});
+
+export const habitCardDelete = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 36,
+  height: 36,
+  border: 'none',
+  background: 'transparent',
+  borderRadius: 8,
+  fontSize: 22,
+  lineHeight: 1,
+  cursor: 'pointer',
+  color: cssVarV2.text.tertiary,
+  ':hover': {
+    color: '#d93025',
+    backgroundColor: cssVarV2.layer.background.hoverOverlay,
+  },
 });
