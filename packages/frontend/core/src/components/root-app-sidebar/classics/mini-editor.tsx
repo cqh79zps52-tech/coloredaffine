@@ -566,33 +566,63 @@ export const MiniEditor = ({
     [blocks, focusedBlockId]
   );
 
-  // Close the slash menu when the input loses focus to anything other
-  // than the menu itself. We do that with a microtask delay so a click
-  // on a menu item still has time to register.
+  // Why no `handleBlur` clearing focusedBlockId / slashState anymore:
   //
-  // The same delay is used to clear `focusedBlockId` so the formatting
-  // toolbar (which lives outside the textarea) can keep itself open
-  // while the user clicks one of its buttons. The toolbar marks its
-  // root element with `data-mini-toolbar="1"`; if focus moves there we
-  // leave the focus state alone.
-  const handleBlur = useCallback(() => {
-    setTimeout(() => {
-      const active = document.activeElement;
-      if (active && active instanceof HTMLElement) {
-        if (active.dataset.miniSlash === '1') return;
-        if (active.closest('[data-mini-toolbar="1"]')) return;
-      }
-      setSlashState(null);
-      setFocusedBlockId(null);
-    }, 0);
-  }, []);
+  // The previous version dismissed the format toolbar (and the slash
+  // menu) from the textarea's onBlur, with a setTimeout(0) trying to
+  // detect "did focus actually move to a toolbar/slash button". That
+  // worked for the slash menu but not the format toolbar — inside the
+  // calendar Modal, Radix's focus trap intercepts portal-button clicks
+  // and "fixes" focus, so the toolbar would tear itself down between
+  // mousedown and click and the user just saw the bar flash and
+  // disappear. Verifying that preventDefault stuck reliably across
+  // every browser × portal × focus-trap combination turned out to be
+  // hopeless.
+  //
+  // The new approach is much simpler: track focus via onFocus only,
+  // and dismiss the toolbar / slash menu via a single document-level
+  // pointerdown listener that closes them only when the click lands
+  // *outside* the editor root, the slash menu and the toolbar. The
+  // editor root is tagged with `data-mini-editor="1"`, the slash menu
+  // buttons with `data-mini-slash="1"`, and every toolbar element
+  // with `data-mini-toolbar="1"`. We also clear on Escape so keyboard
+  // users have an exit path.
+  const editorRootRef = useRef<HTMLDivElement | null>(null);
 
   const handleFocus = useCallback((id: string) => {
     setFocusedBlockId(id);
   }, []);
 
+  useEffect(() => {
+    if (!focusedBlockId && !slashState) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (editorRootRef.current?.contains(target)) return;
+      if (target.closest('[data-mini-toolbar="1"]')) return;
+      if (target.closest('[data-mini-slash="1"]')) return;
+      // Click landed completely outside the editor surface — dismiss
+      // both auxiliary popups so we don't leave a stale toolbar
+      // hovering over unrelated content.
+      setFocusedBlockId(null);
+      setSlashState(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSlashState(null);
+        setFocusedBlockId(null);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [focusedBlockId, slashState]);
+
   return (
-    <div className={styles.miniEditor}>
+    <div className={styles.miniEditor} data-mini-editor="1" ref={editorRootRef}>
       {blocks.map((b, i) => {
         const isFirst = i === 0;
         const showPlaceholder = isFirst && b.type === 'p' && b.text === '';
@@ -639,7 +669,6 @@ export const MiniEditor = ({
               onChange={e => handleTextChange(i, e.target.value)}
               onKeyDown={e => handleKeyDown(i, e)}
               onFocus={() => handleFocus(b.id)}
-              onBlur={handleBlur}
               spellCheck={false}
               autoComplete="off"
               rows={1}

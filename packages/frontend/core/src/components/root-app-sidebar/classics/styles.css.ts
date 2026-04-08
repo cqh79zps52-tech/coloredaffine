@@ -249,11 +249,20 @@ export const deleteButton = style({
 // Wider, taller modal so the calendar feels like a real page rather
 // than a sidebar popover. The Modal wrapper provides the outer
 // width/height; this content fills 100% of that.
+//
+// Top padding uses env(safe-area-inset-top) so on iOS / notched
+// Android the month label + nav buttons sit *below* the status bar
+// instead of underneath the camera cutout. env() resolves to 0 on
+// desktop browsers so the desktop modal is unaffected. We always
+// pad bottom too so the grid never hugs the home-indicator.
 export const calendarModalContent = style({
   display: 'flex',
   flexDirection: 'column',
   gap: 12,
-  padding: '0 4px',
+  paddingLeft: 4,
+  paddingRight: 4,
+  paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
+  paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
   width: '100%',
   height: '100%',
   minHeight: 0,
@@ -380,19 +389,25 @@ export const calendarDayDot = style({
 // cell. We use a column layout so the editor fills all remaining
 // vertical space while the header (day label + back button) stays
 // pinned at the top.
+//
+// The whole screen is shifted below the system status bar with a
+// safe-area top padding. Without this the back button on iPhone sits
+// underneath the camera notch and is unreachable.
 export const calendarDayDetail = style({
   display: 'flex',
   flexDirection: 'column',
   width: '100%',
   height: '100%',
   minHeight: 0,
+  paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
+  paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
 });
 
 export const calendarDayDetailHeader = style({
   display: 'flex',
   alignItems: 'center',
   gap: 12,
-  padding: '8px 4px 12px 4px',
+  padding: '12px 12px 12px 8px',
   borderBottom: `1px solid ${cssVarV2.layer.insideBorder.border}`,
 });
 
@@ -790,11 +805,16 @@ export const formatSwatch = style({
 });
 
 // ── Habits panel — refreshed ─────────────────────────────────
+// Same safe-area treatment as the calendar so the header doesn't
+// hide under the iOS notch when the modal goes fullScreen on mobile.
 export const habitsModalContent = style({
   display: 'flex',
   flexDirection: 'column',
   gap: 20,
-  padding: '4px 8px 8px 8px',
+  paddingLeft: 8,
+  paddingRight: 8,
+  paddingTop: 'max(4px, env(safe-area-inset-top, 0px))',
+  paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
   width: '100%',
   height: '100%',
   minHeight: 0,

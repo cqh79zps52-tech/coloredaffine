@@ -3,6 +3,15 @@ import Intelligents
 import UIKit
 
 class AFFiNEViewController: CAPBridgeViewController {
+  // The floating IntelligentsButton (the round AI button shown in
+  // the bottom-right corner) is intentionally disabled in this fork.
+  // We keep the property declaration so the
+  // `AffineViewController+AIButton.swift` extension still type-checks
+  // (it conforms us to `IntelligentsButtonDelegate`), but we never
+  // install the button into the view hierarchy and never start the
+  // 3-second eligibility timer that previously presented it. The JS
+  // side's `AIButtonService.presentAIButton(false)` is also wired up
+  // for belt-and-braces, but the real source of the button was here.
   var intelligentsButton: IntelligentsButton?
 
   override func viewDidLoad() {
@@ -11,10 +20,6 @@ class AFFiNEViewController: CAPBridgeViewController {
     navigationController?.navigationBar.isHidden = true
     extendedLayoutIncludesOpaqueBars = false
     edgesForExtendedLayout = []
-    let intelligentsButton = installIntelligentsButton()
-    intelligentsButton.delegate = self
-    self.intelligentsButton = intelligentsButton
-    dismissIntelligentsButton()
   }
 
   override func webViewConfiguration(for instanceConfiguration: InstanceConfiguration) -> WKWebViewConfiguration {
@@ -39,40 +44,9 @@ class AFFiNEViewController: CAPBridgeViewController {
     plugins.forEach { bridge?.registerPluginInstance($0) }
   }
 
-  private var intelligentsButtonTimer: Timer?
-  private var isCheckingIntelligentEligibility = false
-
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     IntelligentContext.shared.webView = webView
     navigationController?.setNavigationBarHidden(false, animated: animated)
-    let timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-      self?.checkEligibilityOfIntelligent()
-    }
-    intelligentsButtonTimer = timer
-    RunLoop.main.add(timer, forMode: .common)
-  }
-
-  private func checkEligibilityOfIntelligent() {
-    guard !isCheckingIntelligentEligibility else { return }
-    assert(intelligentsButton != nil)
-    guard intelligentsButton?.isHidden ?? false else { return } // already eligible
-    isCheckingIntelligentEligibility = true
-    IntelligentContext.shared.webView = webView
-    IntelligentContext.shared.preparePresent { [self] result in
-      DispatchQueue.main.async {
-        defer { self.isCheckingIntelligentEligibility = false }
-        switch result {
-        case .failure: break
-        case .success:
-          self.presentIntelligentsButton()
-        }
-      }
-    }
-  }
-
-  override func viewDidDisappear(_ animated: Bool) {
-    super.viewDidDisappear(animated)
-    intelligentsButtonTimer?.invalidate()
   }
 }

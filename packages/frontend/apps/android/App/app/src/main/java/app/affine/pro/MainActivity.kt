@@ -97,8 +97,12 @@ class MainActivity : BridgeActivity(), AIButtonPlugin.Callback, AFFiNEThemePlugi
     }
 
     override fun present() {
+        // The floating AI button is intentionally disabled in this fork.
+        // Even if the JS side or a plugin asks us to present it, we no-op
+        // and force-hide the FAB so it can never appear in the bottom-right
+        // corner. iOS does the same in AffineViewController.swift.
         lifecycleScope.launch {
-            fab.show()
+            fab.hide()
         }
     }
 
