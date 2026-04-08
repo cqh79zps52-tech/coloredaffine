@@ -22,6 +22,14 @@ on:
         description: 'Build Linux Desktop'
         type: boolean
         default: false
+      build_android:
+        description: 'Build Android (sideload APK)'
+        type: boolean
+        default: true
+      build_ios:
+        description: 'Build iOS (sideload IPA, unsigned)'
+        type: boolean
+        default: true
       create_release:
         description: 'Create GitHub Release'
         type: boolean
@@ -53,6 +61,8 @@ jobs:
       build_windows: ${{ steps.flags.outputs.build_windows }}
       build_server: ${{ steps.flags.outputs.build_server }}
       build_linux: ${{ steps.flags.outputs.build_linux }}
+      build_android: ${{ steps.flags.outputs.build_android }}
+      build_ios: ${{ steps.flags.outputs.build_ios }}
     steps:
       - uses: actions/checkout@v4
 
@@ -95,11 +105,15 @@ jobs:
             echo "build_windows=${{ inputs.build_windows }}" >> "$GITHUB_OUTPUT"
             echo "build_server=${{ inputs.build_server }}" >> "$GITHUB_OUTPUT"
             echo "build_linux=${{ inputs.build_linux }}" >> "$GITHUB_OUTPUT"
+            echo "build_android=${{ inputs.build_android }}" >> "$GITHUB_OUTPUT"
+            echo "build_ios=${{ inputs.build_ios }}" >> "$GITHUB_OUTPUT"
           else
             echo "build_macos=true" >> "$GITHUB_OUTPUT"
             echo "build_windows=true" >> "$GITHUB_OUTPUT"
             echo "build_server=true" >> "$GITHUB_OUTPUT"
             echo "build_linux=false" >> "$GITHUB_OUTPUT"
+            echo "build_android=true" >> "$GITHUB_OUTPUT"
+            echo "build_ios=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ─────────────────────────────────────────────
@@ -629,6 +643,205 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/affine:${{ needs.prepare.outputs.BUILD_TYPE }}-latest
 
   # ─────────────────────────────────────────────
+  # 5b. Android sideload APK (debug-signed, installs anywhere)
+  # ─────────────────────────────────────────────
+  build-android:
+    name: Android Sideload APK
+    if: ${{ needs.prepare.outputs.build_android == 'true' }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
+      VERSION_NAME: ${{ needs.prepare.outputs.APP_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+
+      - name: Setup Node.js
+        timeout-minutes: 10
+        uses: ./.github/actions/setup-node
+        with:
+          extra-flags: workspaces focus @affine/monorepo @affine-tools/cli @affine/android
+          playwright-install: false
+          electron-install: false
+          hard-link-nm: false
+          enableScripts: false
+
+      - name: Setup Rust (android target)
+        uses: ./.github/actions/build-rust
+        with:
+          target: aarch64-linux-android
+          package: affine_mobile_native
+          no-build: 'true'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build Android web bundle
+        run: yarn affine @affine/android build
+        env:
+          PUBLIC_PATH: '/'
+
+      - name: Stub google-services.json
+        # Firebase / Crashlytics gradle plugins refuse to configure without
+        # this file. We don't have (and don't want) real Firebase keys for
+        # a sideload build, so we drop in a placeholder that satisfies the
+        # plugin's schema check; Firebase just won't initialise at runtime.
+        shell: bash
+        run: |
+          cat > packages/frontend/apps/android/App/app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "stub-sideload",
+              "storage_bucket": "stub-sideload.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                  "android_client_info": { "package_name": "app.affine.pro" }
+                },
+                "oauth_client": [],
+                "api_key": [{ "current_key": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }],
+                "services": {
+                  "appinvite_service": { "other_platform_oauth_client": [] }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+
+      - name: Cap sync
+        run: yarn workspace @affine/android cap sync
+
+      - name: Build debug APK (canary flavor)
+        working-directory: packages/frontend/apps/android/App
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleCanaryDebug --no-daemon
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p builds
+          shopt -s nullglob
+          APKS=(packages/frontend/apps/android/App/app/build/outputs/apk/canary/debug/*.apk)
+          if [ ${#APKS[@]} -eq 0 ]; then
+            echo "No APK produced — listing build/outputs for debugging:"
+            find packages/frontend/apps/android/App/app/build/outputs -type f || true
+            exit 1
+          fi
+          cp "${APKS[0]}" "./builds/affine-${RELEASE_VERSION}-${BUILD_TYPE}-android-arm64.apk"
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: affine-android-arm64-builds
+          path: builds
+
+  # ─────────────────────────────────────────────
+  # 5c. iOS sideload IPA (unsigned, repackaged for Sideloadly)
+  # ─────────────────────────────────────────────
+  build-ios:
+    name: iOS Sideload IPA (unsigned)
+    if: ${{ needs.prepare.outputs.build_ios == 'true' }}
+    needs: prepare
+    runs-on: macos-latest
+    env:
+      BUILD_TYPE: ${{ needs.prepare.outputs.BUILD_TYPE }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Version
+        uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ needs.prepare.outputs.APP_VERSION }}
+
+      - name: Setup Node.js
+        timeout-minutes: 10
+        uses: ./.github/actions/setup-node
+        with:
+          extra-flags: workspaces focus @affine/ios
+          playwright-install: false
+          electron-install: false
+          hard-link-nm: false
+          enableScripts: false
+
+      - name: Setup Rust (ios target)
+        uses: ./.github/actions/build-rust
+        with:
+          target: aarch64-apple-ios
+          package: affine_mobile_native
+          no-build: 'true'
+
+      - name: Build iOS web bundle
+        run: yarn affine @affine/ios build
+        env:
+          PUBLIC_PATH: '/'
+
+      - name: Cap sync
+        run: yarn workspace @affine/ios sync
+
+      - name: Build unsigned .app for iphoneos
+        working-directory: packages/frontend/apps/ios/App
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            EXPANDED_CODE_SIGN_IDENTITY_NAME="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: Repackage as Payload IPA for Sideloadly
+        # Sideloadly expects an IPA: a zip with `Payload/<App>.app/` at the
+        # root. We strip the `_CodeSignature` directory because the build
+        # is unsigned anyway and Sideloadly will re-sign with the user's
+        # Apple ID at install time.
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP_PATH=$(find packages/frontend/apps/ios/App/build/Build/Products/Release-iphoneos -maxdepth 2 -name "*.app" -type d | head -n1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app produced — listing Release-iphoneos for debugging:"
+            find packages/frontend/apps/ios/App/build/Build/Products/Release-iphoneos -maxdepth 3 || true
+            exit 1
+          fi
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/Payload"
+          cp -R "$APP_PATH" "$STAGE/Payload/"
+          rm -rf "$STAGE/Payload/$(basename "$APP_PATH")/_CodeSignature" || true
+          mkdir -p builds
+          IPA="builds/affine-${RELEASE_VERSION}-${BUILD_TYPE}-ios-arm64-unsigned.ipa"
+          (cd "$STAGE" && zip -qr "$OLDPWD/$IPA" Payload)
+          ls -lah "$IPA"
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: affine-ios-arm64-builds
+          path: builds
+
+  # ─────────────────────────────────────────────
   # 6. Create GitHub Release (collects all artifacts)
   # ─────────────────────────────────────────────
   release:
@@ -643,6 +856,8 @@ jobs:
       - build-windows
       - build-linux
       - build-docker
+      - build-android
+      - build-ios
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.prepare.outputs.APP_VERSION }}
