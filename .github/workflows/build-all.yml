@@ -770,7 +770,13 @@ jobs:
         timeout-minutes: 10
         uses: ./.github/actions/setup-node
         with:
-          extra-flags: workspaces focus @affine/ios
+          # @affine/monorepo + @affine-tools/cli must be focused too,
+          # otherwise the `r` bin (provided by @affine-tools/cli and
+          # spawned by `yarn affine ...` under the hood) is not linked
+          # at the repo root and the build dies with `command not
+          # found: r` before it ever reaches xcodebuild. Mirrors the
+          # focus list used by the Android job in release-mobile.yml.
+          extra-flags: workspaces focus @affine/monorepo @affine-tools/cli @affine/ios
           playwright-install: false
           electron-install: false
           hard-link-nm: false
