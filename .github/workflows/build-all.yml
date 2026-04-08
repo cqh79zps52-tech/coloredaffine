@@ -789,6 +789,15 @@ jobs:
           package: affine_mobile_native
           no-build: 'true'
 
+      # Pin Xcode the same way release-mobile.yml does. The default
+      # macos-latest Xcode (16.4 today) ships a Swift 6.0 toolchain
+      # that chokes on isolated-conformance syntax (`extension Foo:
+      # @MainActor Bar {}`) used by upstream ListViewKit, which needs
+      # Swift 6.1+.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 26.2
+
       - name: Build iOS web bundle
         run: yarn affine @affine/ios build
         env:
