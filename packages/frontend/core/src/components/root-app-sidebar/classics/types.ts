@@ -24,35 +24,12 @@ export interface Habit {
  */
 export type MiniBlockType = 'p' | 'todo' | 'h1';
 
-/**
- * Visual marks applied to an entire block. We deliberately don't
- * support per-range marks because the underlying editor still uses a
- * single `<textarea>`, which can't host inline spans without rewriting
- * the editor on top of contentEditable. Whole-block marks cover the
- * "highlight a note", "underline a heading" and "colour a reminder"
- * cases that the calendar day cells actually need.
- */
-export interface MiniBlockMarks {
-  /** Whole-block underline. */
-  underline?: boolean;
-  /**
-   * Background colour applied across the whole block. When omitted no
-   * highlight is rendered. Stored as a CSS colour string so the value
-   * survives JSON round-trips.
-   */
-  highlight?: string;
-  /** Foreground (text) colour for the block. */
-  color?: string;
-}
-
 export interface MiniBlock {
   id: string;
   type: MiniBlockType;
   text: string;
   /** Only meaningful when type === 'todo'. */
   done?: boolean;
-  /** Optional whole-block visual marks. */
-  marks?: MiniBlockMarks;
 }
 
 /**
