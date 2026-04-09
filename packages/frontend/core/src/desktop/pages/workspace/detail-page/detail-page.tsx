@@ -1,26 +1,24 @@
 import { Scrollable } from '@affine/component';
 import { PageDetailLoading } from '@affine/component/page-detail-skeleton';
-import type { AIChatParams } from '@affine/core/blocksuite/ai';
-import { AIProvider } from '@affine/core/blocksuite/ai';
 import type { AffineEditorContainer } from '@affine/core/blocksuite/block-suite-editor';
 import { EditorOutlineViewer } from '@affine/core/blocksuite/outline-viewer';
 import { AffineErrorBoundary } from '@affine/core/components/affine/affine-error-boundary';
-// import { PageAIOnboarding } from '@affine/core/components/affine/ai-onboarding';
 import { GlobalPageHistoryModal } from '@affine/core/components/affine/page-history-modal';
-import { CommentSidebar } from '@affine/core/components/comment/sidebar';
 import { useGuard } from '@affine/core/components/guard';
 import { useAppSettingHelper } from '@affine/core/components/hooks/affine/use-app-setting-helper';
-import { useEnableAI } from '@affine/core/components/hooks/affine/use-enable-ai';
 import { useRegisterBlocksuiteEditorCommands } from '@affine/core/components/hooks/affine/use-register-blocksuite-editor-commands';
 import { useActiveBlocksuiteEditor } from '@affine/core/components/hooks/use-block-suite-editor';
 import { PageDetailEditor } from '@affine/core/components/page-detail-editor';
-import { WorkspacePropertySidebar } from '@affine/core/components/properties/sidebar';
 import { TrashPageFooter } from '@affine/core/components/pure/trash-page-footer';
+// The right sidebar's old tab collection (chat, properties, journal,
+// outline, frame, adapter, comment, analytics) was replaced with a
+// single pan/zoom Calendar canvas. The tab source files under
+// `./tabs/` are left in place intentionally — they are dead code
+// that can be restored if the previous layout is ever wanted back.
+import { CalendarCanvas } from '@affine/core/components/root-app-sidebar/classics/calendar-canvas';
 import { TopTip } from '@affine/core/components/top-tip';
-import { ServerService } from '@affine/core/modules/cloud';
 import { DocService } from '@affine/core/modules/doc';
 import { EditorService } from '@affine/core/modules/editor';
-import { FeatureFlagService } from '@affine/core/modules/feature-flag';
 import { GlobalContextService } from '@affine/core/modules/global-context';
 import { JournalService } from '@affine/core/modules/journal';
 import { PeekViewService } from '@affine/core/modules/peek-view';
@@ -35,22 +33,12 @@ import {
 } from '@affine/core/modules/workbench';
 import { WorkspaceService } from '@affine/core/modules/workspace';
 import { isNewTabTrigger } from '@affine/core/utils';
-import { ServerFeature } from '@affine/graphql';
 import track from '@affine/track';
 import { DisposableGroup } from '@blocksuite/affine/global/disposable';
 import { RefNodeSlotsProvider } from '@blocksuite/affine/inlines/reference';
 import { focusBlockEnd } from '@blocksuite/affine/shared/commands';
 import { getLastNoteBlock } from '@blocksuite/affine/shared/utils';
-import {
-  AiIcon,
-  ChartPanelIcon,
-  CommentIcon,
-  ExportIcon,
-  FrameIcon,
-  PropertyIcon,
-  TocIcon,
-  TodayIcon,
-} from '@blocksuite/icons/rc';
+import { CalendarPanelIcon } from '@blocksuite/icons/rc';
 import {
   FrameworkScope,
   useLiveData,
@@ -61,18 +49,11 @@ import clsx from 'clsx';
 import { nanoid } from 'nanoid';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import type { Subscription } from 'rxjs';
 
 import { PageNotFound } from '../../404';
 import * as styles from './detail-page.css';
 import { DetailPageHeader } from './detail-page-header';
 import { DetailPageWrapper } from './detail-page-wrapper';
-import { EditorAdapterPanel } from './tabs/adapter';
-import { EditorAnalyticsPanel } from './tabs/analytics';
-import { EditorChatPanel } from './tabs/chat';
-import { EditorFramePanel } from './tabs/frame';
-import { EditorJournalPanel } from './tabs/journal';
-import { EditorOutlinePanel } from './tabs/outline';
 
 const DetailPageImpl = memo(function DetailPageImpl() {
   const {
@@ -98,7 +79,6 @@ const DetailPageImpl = memo(function DetailPageImpl() {
   const doc = docService.doc;
 
   const mode = useLiveData(editor.mode$);
-  const activeSidebarTab = useLiveData(view.activeSidebarTab$);
 
   const isInTrash = useLiveData(doc.meta$.map(meta => meta.trash));
   const editorContainer = useLiveData(editor.editorContainer$);
@@ -112,47 +92,11 @@ const DetailPageImpl = memo(function DetailPageImpl() {
   // TODO(@eyhn): remove jotai here
   const [_, setActiveBlockSuiteEditor] = useActiveBlocksuiteEditor();
 
-  const enableAI = useEnableAI();
-
-  const featureFlagService = useService(FeatureFlagService);
-  const enableAdapterPanel = useLiveData(
-    featureFlagService.flags.enable_adapter_panel.$
-  );
-  const enableViewAnalyticsPanel = useLiveData(
-    featureFlagService.flags.enable_view_analytics_panel.$
-  );
-
-  const serverService = useService(ServerService);
-  const serverConfig = useLiveData(serverService.server.config$);
-
-  // comment may not be supported by the server
-  const enableComment =
-    workspace.flavour !== 'local' &&
-    serverConfig.features.includes(ServerFeature.Comment);
-
   useEffect(() => {
     if (isActiveView) {
       setActiveBlockSuiteEditor(editorContainer);
     }
   }, [editorContainer, isActiveView, setActiveBlockSuiteEditor]);
-
-  useEffect(() => {
-    const disposables: Subscription[] = [];
-    const openHandler = (params: AIChatParams | null) => {
-      if (!params) {
-        return;
-      }
-      workbench.openSidebar();
-      view.activeSidebarTab('chat');
-    };
-    disposables.push(
-      AIProvider.slots.requestOpenWithChat.subscribe(openHandler)
-    );
-    disposables.push(
-      AIProvider.slots.requestSendWithChat.subscribe(openHandler)
-    );
-    return () => disposables.forEach(d => d.unsubscribe());
-  }, [activeSidebarTab, view, workbench]);
 
   useEffect(() => {
     if (isActiveView) {
@@ -304,9 +248,15 @@ const DetailPageImpl = memo(function DetailPageImpl() {
 
   const [hasScrollTop, setHasScrollTop] = useState(false);
 
+  // The outline viewer's "open panel" affordance used to switch the
+  // right sidebar to its "outline" tab. That tab no longer exists
+  // (the right sidebar is now a single Calendar canvas), so we just
+  // open the sidebar — the user ends up on the Calendar tab, which
+  // is the only tab. EditorOutlineViewer itself still renders its
+  // own floating mini-outline regardless.
   const openOutlinePanel = useCallback(() => {
     workbench.openSidebar();
-    view.activeSidebarTab('outline');
+    view.activeSidebarTab('calendar');
   }, [workbench, view]);
 
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
@@ -372,83 +322,16 @@ const DetailPageImpl = memo(function DetailPageImpl() {
         </div>
       </ViewBody>
 
-      {enableAI && (
-        <ViewSidebarTab
-          tabId="chat"
-          icon={<AiIcon />}
-          unmountOnInactive={false}
-        >
-          <EditorChatPanel editor={editorContainer} />
-        </ViewSidebarTab>
-      )}
-
-      <ViewSidebarTab tabId="properties" icon={<PropertyIcon />}>
-        <Scrollable.Root className={styles.sidebarScrollArea}>
-          <Scrollable.Viewport>
-            <WorkspacePropertySidebar />
-          </Scrollable.Viewport>
-          <Scrollable.Scrollbar />
-        </Scrollable.Root>
+      {/*
+        Right sidebar is now a single pan/zoom Calendar canvas. The
+        previous mix of tabs (chat, properties, journal, outline,
+        frame, adapter, comment, analytics) was removed; their panel
+        source files under ./tabs/ are intentionally kept in place
+        as dead code in case the previous layout is ever restored.
+      */}
+      <ViewSidebarTab tabId="calendar" icon={<CalendarPanelIcon />}>
+        <CalendarCanvas />
       </ViewSidebarTab>
-
-      <ViewSidebarTab tabId="journal" icon={<TodayIcon />}>
-        <Scrollable.Root className={styles.sidebarScrollArea}>
-          <Scrollable.Viewport>
-            <EditorJournalPanel />
-          </Scrollable.Viewport>
-          <Scrollable.Scrollbar />
-        </Scrollable.Root>
-      </ViewSidebarTab>
-
-      <ViewSidebarTab tabId="outline" icon={<TocIcon />}>
-        <Scrollable.Root className={styles.sidebarScrollArea}>
-          <Scrollable.Viewport>
-            <EditorOutlinePanel editor={editorContainer?.host ?? null} />
-          </Scrollable.Viewport>
-          <Scrollable.Scrollbar />
-        </Scrollable.Root>
-      </ViewSidebarTab>
-
-      <ViewSidebarTab tabId="frame" icon={<FrameIcon />}>
-        <Scrollable.Root className={styles.sidebarScrollArea}>
-          <Scrollable.Viewport>
-            <EditorFramePanel editor={editorContainer?.host ?? null} />
-          </Scrollable.Viewport>
-          <Scrollable.Scrollbar />
-        </Scrollable.Root>
-      </ViewSidebarTab>
-
-      {enableAdapterPanel && (
-        <ViewSidebarTab tabId="adapter" icon={<ExportIcon />}>
-          <Scrollable.Root className={styles.sidebarScrollArea}>
-            <Scrollable.Viewport>
-              <EditorAdapterPanel host={editorContainer?.host ?? null} />
-            </Scrollable.Viewport>
-          </Scrollable.Root>
-        </ViewSidebarTab>
-      )}
-
-      {workspace.flavour !== 'local' && enableComment && (
-        <ViewSidebarTab tabId="comment" icon={<CommentIcon />}>
-          <Scrollable.Root className={styles.sidebarScrollArea}>
-            <Scrollable.Viewport>
-              <CommentSidebar />
-            </Scrollable.Viewport>
-            <Scrollable.Scrollbar />
-          </Scrollable.Root>
-        </ViewSidebarTab>
-      )}
-
-      {workspace.flavour === 'affine-cloud' && enableViewAnalyticsPanel && (
-        <ViewSidebarTab tabId="analytics" icon={<ChartPanelIcon />}>
-          <Scrollable.Root className={styles.sidebarScrollArea}>
-            <Scrollable.Viewport>
-              <EditorAnalyticsPanel workspaceId={workspace.id} docId={doc.id} />
-            </Scrollable.Viewport>
-            <Scrollable.Scrollbar />
-          </Scrollable.Root>
-        </ViewSidebarTab>
-      )}
 
       <GlobalPageHistoryModal />
       {/* FIXME: wait for better ai, <PageAIOnboarding /> */}

@@ -9,8 +9,8 @@ import { useCalendarDocs } from './use-calendar-docs';
 // Because nothing in that editor touches global state, every cell can
 // be live at the same time — no more "only one active day" gating.
 
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const MONTH_NAMES = [
+export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+export const MONTH_NAMES = [
   'January',
   'February',
   'March',
@@ -29,7 +29,7 @@ function toDateStr(y: number, m: number, d: number): string {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-function todayStr(): string {
+export function todayStr(): string {
   const d = new Date();
   return toDateStr(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -51,13 +51,16 @@ function formatLongDate(dateStr: string): string {
   return `${weekdays[dt.getDay()]}, ${MONTH_NAMES[dt.getMonth()]} ${dt.getDate()} ${dt.getFullYear()}`;
 }
 
-interface CalendarGridDay {
+export interface CalendarGridDay {
   date: string;
   day: number;
   currentMonth: boolean;
 }
 
-function getCalendarDays(year: number, month: number): CalendarGridDay[] {
+export function getCalendarDays(
+  year: number,
+  month: number
+): CalendarGridDay[] {
   const firstDay = new Date(year, month, 1);
   // Monday = 0 ... Sunday = 6
   let startDow = firstDay.getDay() - 1;
@@ -98,7 +101,7 @@ interface DayCellProps {
   isToday: boolean;
 }
 
-const DayCell = ({
+export const DayCell = ({
   cellDate,
   cellDayNumber,
   isCurrentMonth,

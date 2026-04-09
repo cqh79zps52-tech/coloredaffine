@@ -722,6 +722,97 @@ export const calendarDayNumber = style({
   lineHeight: 1,
 });
 
+// ── Calendar canvas (pan/zoom "map" in right sidebar) ───────
+// The viewport is the right sidebar tab container. We hide overflow
+// so the "world" (the huge grid of months) can be freely translated
+// and scaled underneath without bleeding into the surrounding chrome.
+// touch-action: none keeps the browser from stealing wheel/drag
+// gestures for native scrolling — we handle panning ourselves.
+export const calendarCanvasViewport = style({
+  position: 'relative',
+  width: '100%',
+  height: '100%',
+  overflow: 'hidden',
+  touchAction: 'none',
+  backgroundColor: cssVarV2.layer.background.secondary,
+  cursor: 'grab',
+  userSelect: 'none',
+  selectors: {
+    '&[data-panning="true"]': {
+      cursor: 'grabbing',
+    },
+  },
+});
+
+// The "world" — a single positioned node we CSS-transform as a
+// whole. transform-origin:0 0 lets us compose translate+scale with
+// simple arithmetic (no offset math to undo a centered origin).
+export const calendarCanvasWorld = style({
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  transformOrigin: '0 0',
+  willChange: 'transform',
+  display: 'grid',
+  // 4 columns × 3 rows = 12 months. auto columns let each month own
+  // its natural width so the grid layout inside stays ergonomic.
+  gridTemplateColumns: 'repeat(4, auto)',
+  gap: 80,
+  padding: 80,
+});
+
+// One month block inside the world. We size it wide enough that the
+// per-day mini-editors remain usable when zoomed in at scale 1.
+export const calendarCanvasMonth = style({
+  width: 1400,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  padding: 20,
+  borderRadius: 16,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  boxShadow: '0 4px 24px rgba(0, 0, 0, 0.08)',
+});
+
+// A shorter variant of calendarGrid for use inside the canvas — we
+// fix the row size so month blocks all render the same height no
+// matter how many weeks the month spans.
+export const calendarCanvasGrid = style({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+  gridAutoRows: '180px',
+  gap: 6,
+});
+
+// Floating toolbar pinned to the viewport corner — sits above the
+// transformed world so it stays put while the user pans/zooms.
+export const calendarCanvasToolbar = style({
+  position: 'absolute',
+  top: 12,
+  right: 12,
+  zIndex: 2,
+  display: 'flex',
+  gap: 6,
+  padding: 6,
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+});
+
+export const calendarCanvasZoomLabel = style({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: 44,
+  height: 32,
+  padding: '0 8px',
+  fontSize: 12,
+  color: cssVarV2.text.secondary,
+  fontVariantNumeric: 'tabular-nums',
+});
+
 export const calendarDayNumberToday = style({
   display: 'inline-flex',
   alignItems: 'center',
