@@ -654,6 +654,17 @@ export const slashMenu = style({
   display: 'flex',
   flexDirection: 'column',
   gap: 1,
+  // Radix Dialog (modal) sets `pointer-events: none` on <body> for the
+  // lifetime of the dialog via its DismissableLayer, and only re-enables
+  // `auto` on the Dialog.Content node itself. Our slash menu is
+  // portalled directly to document.body so it lives OUTSIDE that
+  // re-enabling node and inherits the body's `none`, which swallows
+  // every mousedown / touchstart / click on the menu buttons. Opt back
+  // in explicitly. (This was the root cause of "clicking a slash
+  // command does nothing" — not Radix's outside-click dismissal, which
+  // is already handled separately via onPointerDownOutside in
+  // CalendarPanel.)
+  pointerEvents: 'auto',
 });
 
 export const slashItem = style({
