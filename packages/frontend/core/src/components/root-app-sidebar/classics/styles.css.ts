@@ -763,6 +763,9 @@ export const calendarCanvasWorld = style({
 
 // One month block inside the world. We size it wide enough that the
 // per-day mini-editors remain usable when zoomed in at scale 1.
+// The default month block shows only a lightweight preview (day
+// numbers, no editors) — see `calendarCanvasMonthSelected` for the
+// visual state of the single editable month.
 export const calendarCanvasMonth = style({
   width: 1400,
   display: 'flex',
@@ -773,6 +776,56 @@ export const calendarCanvasMonth = style({
   border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
   backgroundColor: cssVarV2.layer.background.primary,
   boxShadow: '0 4px 24px rgba(0, 0, 0, 0.08)',
+  cursor: 'pointer',
+  transition: 'border-color 0.15s, box-shadow 0.15s',
+});
+
+// Blue outline around the currently-selected (editable) month so
+// it's obvious which month is live. The outline "traces the edges"
+// via a thick border + glow. We use cssVarV2.button.primary (the
+// AFFiNE brand blue) to stay consistent with other selected states.
+export const calendarCanvasMonthSelected = style({
+  borderColor: cssVarV2.button.primary,
+  borderWidth: 3,
+  // Compensate for the thicker border so the inner layout doesn't
+  // shift by 2px when a month becomes selected.
+  padding: 18,
+  boxShadow: `0 0 0 2px ${cssVarV2.button.primary}33, 0 4px 32px rgba(0, 0, 0, 0.12)`,
+  cursor: 'default',
+});
+
+// Lightweight preview grid for un-selected months. Fixed row
+// height, plain day-number cells, no editors — rendering cost is a
+// few divs per month instead of 42 live text surfaces.
+export const calendarCanvasPreviewGrid = style({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+  gridAutoRows: '180px',
+  gap: 6,
+});
+
+export const calendarCanvasPreviewDay = style({
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'flex-start',
+  padding: 12,
+  borderRadius: 8,
+  border: `1px solid ${cssVarV2.layer.insideBorder.border}`,
+  backgroundColor: cssVarV2.layer.background.primary,
+  fontSize: 28,
+  fontWeight: 600,
+  color: cssVarV2.text.primary,
+  lineHeight: 1,
+});
+
+export const calendarCanvasPreviewDayOther = style({
+  opacity: 0.35,
+  backgroundColor: cssVarV2.layer.background.secondary,
+});
+
+export const calendarCanvasPreviewDayToday = style({
+  borderColor: cssVarV2.button.primary,
+  color: cssVarV2.button.primary,
 });
 
 // A shorter variant of calendarGrid for use inside the canvas — we

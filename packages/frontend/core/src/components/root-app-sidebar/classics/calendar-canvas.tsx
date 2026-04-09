@@ -1,4 +1,9 @@
-import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import clsx from 'clsx';
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  RefObject,
+} from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -74,20 +79,45 @@ const isInteractiveTarget = (target: EventTarget | null) => {
   return !!target.closest('input, textarea, button, [contenteditable="true"]');
 };
 
+// A month block. When `selected` is true we render the full editing
+// surface — one DayCell per day, each mounting a live MiniEditor.
+// When `selected` is false we render a cheap preview — just the day
+// numbers in a tiny grid, no editors, no workspace doc wiring. This
+// keeps the "map" view light: only one month's worth of editors are
+// ever alive at a time, no matter how far the user zooms out. Click
+// a preview to switch the selection to that month; the blue outline
+// (see calendarCanvasMonthSelected) follows along.
 const MonthBlock = ({
   year,
   month,
   today,
+  selected,
   blockRef,
+  onSelect,
 }: {
   year: number;
   month: number;
   today: string;
+  selected: boolean;
   blockRef?: RefObject<HTMLDivElement | null>;
+  onSelect: (year: number, month: number) => void;
 }) => {
   const days = useMemo(() => getCalendarDays(year, month), [year, month]);
+
+  const handleClick = useCallback(() => {
+    if (!selected) onSelect(year, month);
+  }, [selected, onSelect, year, month]);
+
   return (
-    <div ref={blockRef} className={styles.calendarCanvasMonth}>
+    <div
+      ref={blockRef}
+      className={clsx(
+        styles.calendarCanvasMonth,
+        selected && styles.calendarCanvasMonthSelected
+      )}
+      onClick={handleClick}
+      data-selected={selected ? 'true' : undefined}
+    >
       <div className={styles.calendarHeader}>
         <span className={styles.calendarMonthLabel}>
           {MONTH_NAMES[month]} {year}
@@ -100,20 +130,39 @@ const MonthBlock = ({
           </div>
         ))}
       </div>
-      <div className={styles.calendarCanvasGrid}>
-        {days.map(cd => (
-          <DayCell
-            key={cd.date}
-            cellDate={cd.date}
-            cellDayNumber={cd.day}
-            isCurrentMonth={cd.currentMonth}
-            isToday={cd.date === today}
-          />
-        ))}
-      </div>
+      {selected ? (
+        <div className={styles.calendarCanvasGrid}>
+          {days.map(cd => (
+            <DayCell
+              key={cd.date}
+              cellDate={cd.date}
+              cellDayNumber={cd.day}
+              isCurrentMonth={cd.currentMonth}
+              isToday={cd.date === today}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className={styles.calendarCanvasPreviewGrid}>
+          {days.map(cd => (
+            <div
+              key={cd.date}
+              className={clsx(
+                styles.calendarCanvasPreviewDay,
+                !cd.currentMonth && styles.calendarCanvasPreviewDayOther,
+                cd.date === today && styles.calendarCanvasPreviewDayToday
+              )}
+            >
+              {cd.day}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
+
+const monthKey = (year: number, month: number) => `${year}-${month}`;
 
 export const CalendarCanvas = () => {
   const today = todayStr();
@@ -122,6 +171,18 @@ export const CalendarCanvas = () => {
     () => computeMonths(now.getFullYear(), now.getMonth()),
     [now]
   );
+
+  // Only one month at a time is rendered with live editors — the
+  // rest are cheap day-number previews. The currently-selected
+  // month starts as today's month and changes when the user clicks
+  // any other preview in the canvas.
+  const [selectedKey, setSelectedKey] = useState(() =>
+    monthKey(now.getFullYear(), now.getMonth())
+  );
+
+  const handleSelectMonth = useCallback((year: number, month: number) => {
+    setSelectedKey(monthKey(year, month));
+  }, []);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -297,6 +358,11 @@ export const CalendarCanvas = () => {
     []
   );
 
+  // When a drag exceeds the threshold we also swallow the click
+  // that would otherwise fire after pointerup, so the user doesn't
+  // accidentally flip the selected month every time they pan.
+  const suppressNextClickRef = useRef(false);
+
   const handlePointerUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const p = panState.current;
@@ -317,9 +383,23 @@ export const CalendarCanvas = () => {
         } catch {
           // Already released — nothing to do.
         }
+        suppressNextClickRef.current = true;
       }
       panState.current.active = false;
       panState.current.pointerId = null;
+    },
+    []
+  );
+
+  // Catch click events in the capture phase so month blocks never
+  // see a click that was actually the tail end of a pan gesture.
+  const handleClickCapture = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false;
+        e.stopPropagation();
+        e.preventDefault();
+      }
     },
     []
   );
@@ -346,6 +426,7 @@ export const CalendarCanvas = () => {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onClickCapture={handleClickCapture}
     >
       <div className={styles.calendarCanvasToolbar}>
         <button
@@ -378,15 +459,20 @@ export const CalendarCanvas = () => {
       </div>
 
       <div ref={worldRef} className={styles.calendarCanvasWorld}>
-        {months.map(spec => (
-          <MonthBlock
-            key={`${spec.year}-${spec.month}`}
-            year={spec.year}
-            month={spec.month}
-            today={today}
-            blockRef={spec.isCurrent ? currentMonthRef : undefined}
-          />
-        ))}
+        {months.map(spec => {
+          const key = monthKey(spec.year, spec.month);
+          return (
+            <MonthBlock
+              key={key}
+              year={spec.year}
+              month={spec.month}
+              today={today}
+              selected={selectedKey === key}
+              blockRef={spec.isCurrent ? currentMonthRef : undefined}
+              onSelect={handleSelectMonth}
+            />
+          );
+        })}
       </div>
     </div>
   );
